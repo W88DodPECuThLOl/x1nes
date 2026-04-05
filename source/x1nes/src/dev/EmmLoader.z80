@@ -1,0 +1,120 @@
+	org $3000
+
+MPRINT	EQU	$1FE2
+ERROR   EQU $2033
+MSX     EQU $1FE5
+NL      EQU $1FEB ; 行の先頭以外なら改行
+FILE    EQU $1FA3
+ROPEN   EQU	$2009
+RDD     EQU	$1FA6
+FPRNT   EQU	$1F9D
+
+DTADR   EQU $1F70
+SIZE    EQU $1F72
+
+FDATA	EQU	$3200 ; ファイルの読み込み先
+
+EXT_RAM EQU $0D00 ; 外部RAMのIOポート
+
+	CALL NL
+	CALL MPRINT
+	DB "Neko EmmLoader. File => EMM0"
+	DB 13, 0
+
+    LD   BC,EXT_RAM  ; 外部RAMのIOポート
+    CALL RESET_EXT_RAM_ADDRESS
+
+    LD   A,'0'
+    LD   (FILE_INDEX),A
+LOOP_READ:
+    ; ファイルを読み込む
+    LD   DE,FILE_NAME
+    CALL LOAD_FILE
+    JR   C,EXIT_READ
+
+    ; 外部RAMボードへ転送
+    LD   HL,FDATA        ; データのソースアドレス
+    LD   DE,(SIZE)       ; 読み込んだファイルのサイズ
+    LD   BC,EXT_RAM + 3  ; 外部RAMのIOポート
+    CALL COPY_TO_EXT_RAM
+
+    ; 次のファイル名に書き換える
+    LD   HL,FILE_INDEX
+    INC  (HL)
+    JR   LOOP_READ
+
+EXIT_READ:
+    XOR  A
+    RET
+
+;
+; 外部RAMボードの転送先のアドレスをリセットする
+;
+; BC : 外部RAMのIOポート
+;      EMM0なら0D00H
+;      EMM1なら0D04H
+;
+RESET_EXT_RAM_ADDRESS:
+    ; 書き込みアドレスを設定する
+    XOR A
+    OUT (C),A   ; 0D00H
+    INC C
+    OUT (C),A   ; 0D01H
+    INC C
+    OUT (C),A   ; 0D02H
+    RET
+
+;
+; 外部RAMボードへ転送
+;
+; HL : データのアドレス
+; DE : 転送サイズ
+; BC : 外部RAMのIOポート
+;      EMM0なら0D03H
+;      EMM1なら0D07H
+;
+COPY_TO_EXT_RAM:
+ExtRamLoop:
+    LD  A,(HL)
+    INC HL
+    OUT (C),A   ; 0D03H
+    DEC DE
+    LD  A,D
+    OR  E
+    JR  NZ,ExtRamLoop
+    RET
+
+;
+; ファイルを読み込む
+;
+; DE : ファイル名のアドレス
+;
+LOAD_FILE:
+	; 1. #FILE
+	LD A,0x01         ; ファイル属性
+	CALL FILE         ; IB(InfomationBlock)に設定
+	RET C             ; エラーが発生していたら終了
+	; 2. #ROPEN
+LOOP0:
+	CALL ROPEN        ; 読み込みでファイルをオープンする
+	RET C             ; エラーが発生していたら終了
+	JR Z,ZAP1         ; ファイルがオープンできたので、次の処理へ
+	CALL FPRNT        ; テープの場合
+	                  ;   読み込んだファイル名を表示
+					  ;   FILEで指定したファイルじゃないので
+					  ;   次のファイルへ
+	CALL NL           ; 行の先頭以外なら改行
+	JR LOOP0
+ZAP1:
+    CALL FPRNT        ; 読み込んだファイル名を表示してみる
+    CALL NL           ; 行の先頭以外なら改行
+    ; 3. #RDD
+    LD HL,FDATA       ; 読み込むデータのアドレスを設定
+    LD (DTADR),HL
+    JP RDD            ; 読み込む
+
+; ファイル名は、13文字+"."+3文字
+FILE_NAME:
+	DB "B:DATA"
+FILE_INDEX:
+    DB "0.NES", 0
