@@ -47,7 +47,6 @@ typedef struct Emulator {
     u8 pause;
 } Emulator;
 
-
 void init_emulator(Emulator* emulator, int argc, char *argv[]);
 void reset_emulator(Emulator* emulator);
 void run_emulator(Emulator* emulator);

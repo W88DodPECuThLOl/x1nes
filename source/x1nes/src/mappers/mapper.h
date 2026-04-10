@@ -41,11 +41,11 @@ typedef struct ROMData {
 } ROMData;
 
 typedef struct Mapper {
-    u8 *CHR_ROM;
-    u8 *PRG_ROM;
+    Ptr32 CHR_ROM;
+    Ptr32 PRG_ROM;
     u8 *PRG_RAM;
-    u8 *PRG_ptrs[8];
-    u8 *CHR_ptrs[8];
+    Ptr32 PRG_ptrs[8];
+    Ptr32 CHR_ptrs[8];
     u8 PRG_regs[8];
     u8 CHR_regs[8];
     u16 PRG_banks;
@@ -58,33 +58,32 @@ typedef struct Mapper {
     MapperFormat format;
     u16 name_table_map[4];
     u32 clamp;
-//    u16 clamp;
     u16 mapper_num;
     u8 submapper;
     u8 is_nsf;
-    void (*on_scanline)(struct Mapper *);
-    u8 (*read_ROM)(struct Mapper *, u16);
-    void (*write_ROM)(struct Mapper *, u16, u8);
-    u8 (*read_PRG)(struct Mapper *, u16);
-    void (*write_PRG)(struct Mapper *, u16, u8);
-    u8 (*read_CHR)(struct Mapper *, u16);
-    void (*write_CHR)(struct Mapper *, u16, u8);
-    void (*reset)(struct Mapper *);
+    void (*on_scanline)();
+    u8 (*read_ROM)(u16);
+    void (*write_ROM)(u16, u8);
+    u8 (*read_PRG)(u16);
+    void (*write_PRG)(u16, u8);
+    u8 (*read_CHR)(u16);
+    void (*write_CHR)(u16, u8);
+    void (*reset)();
 
     // mapper extension structs would be attached here
     // memory should be allocated dynamically and should
     // not be freed since this is done by the generic mapper functions
     void *extension;
     // pointer to game genie if any
-    struct Genie *genie;
-    struct NSF *NSF;
+//    struct Genie *genie;
+//    struct NSF *NSF;
     struct Emulator *emulator;
 } Mapper;
 
 void load_file(char *file_name, char *game_genie, Mapper *mapper);
 int load_data(ROMData *data, Mapper *mapper);
 void free_mapper(Mapper *mapper);
-void set_mirroring(Mapper *mapper, Mirroring mirroring);
+void set_mirroring(Mirroring mirroring);
 
 // mapper specifics
 

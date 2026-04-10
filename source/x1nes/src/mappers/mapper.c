@@ -9,21 +9,21 @@
 //#include "../utils.h"
 //#include "../nsf.h"
 
+extern Emulator gEmulator;
+
 __sfr __banked __at(0x0B00) IoPortBank;
 
-
-
 static int select_mapper(Mapper *mapper);
-static void set_mapping(Mapper *mapper, u16 tl, u16 tr, u16 bl, u16 br);
+static void set_mapping(u16 tl, u16 tr, u16 bl, u16 br);
 
 // generic mapper implementations
-static u8 read_PRG(Mapper *mapper, u16 address);
-static void write_PRG(Mapper *mapper, u16 address, u8 value);
-static u8 read_CHR(Mapper *mapper, u16 address);
-static void write_CHR(Mapper *mapper, u16 address, u8 value);
-static u8 read_ROM(Mapper *mapper, u16 address);
-static void write_ROM(Mapper *mapper, u16 address, u8 value);
-static void on_scanline(Mapper *mapper);
+static u8 read_PRG(u16 address);
+static void write_PRG(u16 address, u8 value);
+static u8 read_CHR(u16 address);
+static void write_CHR(u16 address, u8 value);
+static u8 read_ROM(u16 address);
+static void write_ROM(u16 address, u8 value);
+static void on_scanline();
 
 static int select_mapper(Mapper *mapper) {
     // load generic implementations
@@ -34,25 +34,25 @@ static int select_mapper(Mapper *mapper) {
     mapper->read_ROM = read_ROM;
     mapper->write_ROM = write_ROM;
     mapper->on_scanline = on_scanline;
-    mapper->clamp = (mapper->PRG_banks * 0x4000) - 1;
+    mapper->clamp = ((u32)mapper->PRG_banks * 0x4000) - 1;
 
     switch (mapper->mapper_num) {
         case 0: return 0;
-#if 0
         case 1: return load_MMC1(mapper);
         case 2: return load_UXROM(mapper);
-#endif
         case 3: return load_CNROM(mapper);
-#if 0
         case 4: return load_MMC3(mapper);
         case 7: return load_AOROM(mapper);
+#if 0
         case 11: return load_colordreams(mapper);
         case 13: return load_CPROM(mapper);
         case 46: return load_colordreams46(mapper);
+#endif
         case 66: return load_GNROM(mapper);
         case 75: return load_VRC1(mapper);
         case 94: return load_UN1ROM(mapper);
         case 180: return load_mapper180(mapper);
+#if 0
         case 185: return load_mapper185(mapper);
 #endif
         default:
@@ -61,69 +61,68 @@ static int select_mapper(Mapper *mapper) {
     }
 }
 
-static void set_mapping(Mapper *mapper, u16 tl, u16 tr, u16 bl, u16 br) {
-    mapper->name_table_map[0] = tl;
-    mapper->name_table_map[1] = tr;
-    mapper->name_table_map[2] = bl;
-    mapper->name_table_map[3] = br;
+static void set_mapping(u16 tl, u16 tr, u16 bl, u16 br) {
+    gEmulator.mapper.name_table_map[0] = tl;
+    gEmulator.mapper.name_table_map[1] = tr;
+    gEmulator.mapper.name_table_map[2] = bl;
+    gEmulator.mapper.name_table_map[3] = br;
 }
 
-void set_mirroring(Mapper *mapper, Mirroring mirroring) {
-    if (mirroring == mapper->mirroring)
+void set_mirroring(Mirroring mirroring) {
+    if (mirroring == gEmulator.mapper.mirroring)
         return;
     switch (mirroring) {
         case HORIZONTAL:
-            set_mapping(mapper, 0, 0, 0x400, 0x400);
+            set_mapping(0, 0, 0x400, 0x400);
             LOG(DEBUG, "Using mirroring: Horizontal");
             break;
         case VERTICAL:
-            set_mapping(mapper, 0, 0x400, 0, 0x400);
+            set_mapping(0, 0x400, 0, 0x400);
             LOG(DEBUG, "Using mirroring: Vertical");
             break;
         case ONE_SCREEN_LOWER:
         case ONE_SCREEN:
-            set_mapping(mapper, 0, 0, 0, 0);
+            set_mapping(0, 0, 0, 0);
             LOG(DEBUG, "Using mirroring: Single screen lower");
             break;
         case ONE_SCREEN_UPPER:
-            set_mapping(mapper, 0x400, 0x400, 0x400, 0x400);
+            set_mapping(0x400, 0x400, 0x400, 0x400);
             LOG(DEBUG, "Using mirroring: Single screen upper");
             break;
         case FOUR_SCREEN:
-            set_mapping(mapper, 0, 0x400, 0x800, 0xC00);
+            set_mapping(0, 0x400, 0x800, 0xC00);
             LOG(DEBUG, "Using mirroring: Four screen");
             break;
         default:
-            set_mapping(mapper, 0, 0, 0, 0);
+            set_mapping(0, 0, 0, 0);
             LOG(ERROR, "Unknown mirroring %u", mirroring);
     }
-    mapper->mirroring = mirroring;
+    gEmulator.mapper.mirroring = mirroring;
 }
 
-static void on_scanline(Mapper *mapper) {
-    (void)mapper;
+static void on_scanline() {
 }
 
-static u8 read_ROM(Mapper *mapper, u16 address) {
+static u8 read_ROM(u16 address) {
     if (address < 0x6000) {
         // expansion rom
         LOG(DEBUG, "Attempted to read from unavailable expansion ROM");
-        return mapper->emulator->mem.bus;
+        return gEmulator.mem.bus;
     }
     if (address < 0x8000) {
         // PRG ram
-        if (mapper->PRG_RAM != nullptr)
-            return mapper->PRG_RAM[address - 0x6000];
+        if (gEmulator.mapper.PRG_RAM != nullptr)
+            return gEmulator.mapper.PRG_RAM[address - 0x6000];
 
         LOG(DEBUG, "Attempted to read from non existent PRG RAM");
-        return mapper->emulator->mem.bus;
+        return gEmulator.mem.bus;
     }
 
     // PRG
-    return mapper->read_PRG(mapper, address);
+    return gEmulator.mapper.read_PRG(address);
 }
 
-static void write_ROM(Mapper *mapper, u16 address, u8 value) {
+static void write_ROM(u16 address, u8 value) {
     if (address < 0x6000) {
         LOG(DEBUG, "Attempted to write to unavailable expansion ROM");
         return;
@@ -131,8 +130,8 @@ static void write_ROM(Mapper *mapper, u16 address, u8 value) {
 
     if (address < 0x8000) {
         // extended ram
-        if (mapper->PRG_RAM != nullptr)
-            mapper->PRG_RAM[address - 0x6000] = value;
+        if (gEmulator.mapper.PRG_RAM != nullptr)
+            gEmulator.mapper.PRG_RAM[address - 0x6000] = value;
         else {
             LOG(DEBUG, "Attempted to write to non existent PRG RAM");
         }
@@ -140,7 +139,7 @@ static void write_ROM(Mapper *mapper, u16 address, u8 value) {
     }
 
     // PRG
-    mapper->write_PRG(mapper, address, value);
+    gEmulator.mapper.write_PRG(address, value);
 }
 
 #if 0
@@ -174,16 +173,15 @@ static u8 read_BANK0(u16 address) __naked
     __endasm;
 }
 
-static u8 read_PRG(Mapper *mapper, u16 address)
+static u8 read_PRG(u16 address)
 {
-    //    return mapper->PRG_ROM[(address - 0x8000) & mapper->clamp];
-    return read_BANK0((address - 0x8000) & mapper->clamp);
+    //    return mapper->PRG_ROM[(address - 0x8000) & gEmulator.mapper.clamp];
+    return read_BANK0((address - 0x8000) & gEmulator.mapper.clamp);
 }
 #endif
 
-static void write_PRG(Mapper *mapper, u16 address, u8 value) {
+static void write_PRG(u16 address, u8 value) {
     LOG(DEBUG, "Attempted to write to PRG-ROM");
-    (void)mapper;
     (void)address;
     (void)value;
 }
@@ -199,22 +197,20 @@ static u8 read_CHR(Mapper *mapper, u16 address) {
     return data;
 }
 #else
-static u8 read_CHR(Mapper *mapper, u16 address) __naked
+static u8 read_CHR(u16 address) __naked
 {
-    (void)mapper;
     (void)address;
 
-    // hl : mapper
-    // de : address
+    // hl : address
     // return : a
 
     __asm
     ld	bc, #_IoPortBank
-    ld	hl, #0x1001
+    ld	de, #0x1001
 	di
-	out	(c), l ; バンク1
-    ld	a, (de)
-	out	(c), h ; メインメモリ
+	out	(c), e ; バンク1
+    ld	a, (hl)
+	out	(c), d ; メインメモリ
     ei
 
 	ret
@@ -222,8 +218,8 @@ static u8 read_CHR(Mapper *mapper, u16 address) __naked
 }
 #endif
 
-static void write_CHR(Mapper *mapper, u16 address, u8 value) {
-    if (!mapper->CHR_RAM_size) {
+static void write_CHR(u16 address, u8 value) {
+    if (!gEmulator.mapper.CHR_RAM_size) {
         LOG(DEBUG, "Attempted to write to CHR-ROM");
         return;
     }
@@ -314,12 +310,11 @@ void load_file(char *file_name, char *game_genie, Mapper *mapper) {
 }
 
 int load_data(ROMData *rom_data, Mapper *mapper) {
-#if 0
-    // clear mapper
-    memset(mapper, 0, sizeof(Mapper));
-#endif
     const u8 *header = rom_data->rom;
     u32 offset = 0;
+
+    // clear mapper
+    memset(mapper, 0, sizeof(Mapper));
 
 #if 0
     if (strncmp((char *) header, "NESM\x1A", 5) == 0) {
@@ -470,7 +465,7 @@ int load_data(ROMData *rom_data, Mapper *mapper) {
         memset(mapper->PRG_RAM, 0, mapper->RAM_size);
 #else
         // @todo
-        mapper->PRG_RAM = nullptr;
+        mapper->PRG_RAM = (u8*)0x6000;
 #endif
     }
 
@@ -510,11 +505,8 @@ int load_data(ROMData *rom_data, Mapper *mapper) {
         memset(mapper->CHR_ROM, 0, mapper->CHR_RAM_size);
     }
 #else
-    // X1 turboZ
-
-    // メモ）BANK MEMORY 0と1に置いてある
-    mapper->PRG_ROM = (u8*)0; // BANK0
-    mapper->CHR_ROM = (u8*)0; // BANK1
+    mapper->PRG_ROM.ptr32 = 0;
+    mapper->CHR_ROM.ptr32 = 0;
     if (mapper->CHR_banks) {
     } else {
         if (!mapper->CHR_RAM_size) {
@@ -543,7 +535,7 @@ int load_data(ROMData *rom_data, Mapper *mapper) {
 
     if (select_mapper(mapper) < 0)
         return -1;
-    set_mirroring(mapper, mirroring);
+    set_mirroring(mirroring);
 
     if (rom_data->genie_rom != nullptr) {
         LOG(INFO, "-------- Game Genie Cartridge info ---------");

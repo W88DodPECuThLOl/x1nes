@@ -32,7 +32,7 @@ REM Copyright (C) 2022 by M.Ishino (AILight)
 set AILZ80ASM=AILZ80ASM.exe
 
 set LINK=sdcc
-set LINK_FLAGS=-mz80 --out-fmt-ihx --no-std-crt0 --code-loc 0x6000 --data-loc 0
+set LINK_FLAGS=-mz80 --out-fmt-ihx --no-std-crt0 --code-loc 0x8000 --data-loc 0
 
 REM hudisk https://github.com/BouKiCHi/HuDisk
 REM HuDisk ver 1.20
@@ -183,7 +183,7 @@ exit /b %errorlevel%
     if %errorlevel% neq 0 (
         exit /b %errorlevel%
     )
-    makebin -p -s 65536 -o 24576 "%OBJ_DIR%\temp.ihx" %TARGET%
+    makebin -p -s 65536 -o 32768 "%OBJ_DIR%\temp.ihx" %TARGET%
 exit /b %errorlevel%
 
 :package
@@ -215,8 +215,8 @@ exit /b %errorlevel%
         exit /b %errorlevel%
     )
 
-    @echo   add "%TARGET%" read:6000 go:6000
-    %HUDISK% "%PACKAGE%" -a "%TARGET%" --read 6000 --go 6000 > nul
+    @echo   add "%TARGET%" read:8000 go:8000
+    %HUDISK% "%PACKAGE%" -a "%TARGET%" --read 8000 --go 8000 > nul
     if %errorlevel% neq 0 (
         exit /b %errorlevel%
     )

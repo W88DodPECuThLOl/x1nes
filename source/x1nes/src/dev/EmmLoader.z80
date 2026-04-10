@@ -18,9 +18,15 @@ EXT_RAM EQU $0D00 ; 外部RAMのIOポート
 
 	CALL NL
 	CALL MPRINT
-	DB "Neko EmmLoader. File => EMM0"
-	DB 13, 0
+	DB   "Neko EmmLoader. File => EMM0"
+	DB   13, 0
 
+    ; EXT_RAMをチェック
+    LD   BC,EXT_RAM  ; 外部RAMのIOポート
+    CALL EXT_RAM_CHECK
+    JR   NZ,EXT_RAM_ERROR ; エラー
+
+    ; ファイルを外部RAMへコピーする
     LD   BC,EXT_RAM  ; 外部RAMのIOポート
     CALL RESET_EXT_RAM_ADDRESS
 
@@ -44,7 +50,50 @@ LOOP_READ:
     JR   LOOP_READ
 
 EXIT_READ:
+    LD   A,(FILE_INDEX)
+    CP   '0'
+    JR   Z, LOAD_ERROR ; 最初のファイルが読み込めなかった
+    ; 正常終了
     XOR  A
+    RET
+
+LOAD_ERROR:
+	CALL MPRINT
+	DB   "The B:DATA0.NES file could not be found."
+	DB   13, 0
+    LD   A,8 ; File not Found
+    SCF
+    RET
+
+EXT_RAM_ERROR:
+	CALL MPRINT
+	DB   "There are no EMM0 devices."
+	DB   13, 0
+    LD   A,2 ; Device Offline
+    SCF
+    RET
+
+;
+; 外部RAMボードをチェックする
+;
+; BC : 外部RAMのIOポート
+;      EMM0なら0D00H
+;      EMM1なら0D04H
+; return z  : OK
+;        nz : NG
+;
+EXT_RAM_CHECK:
+    ; 書き込んで試してみる
+    PUSH BC
+    CALL RESET_EXT_RAM_ADDRESS
+    INC  C
+    LD   A,0xAA
+    OUT  (C),A   ; 0D03H
+    POP  BC
+    CALL RESET_EXT_RAM_ADDRESS
+    INC  C
+    IN   A,(C)   ; 0D03H
+    CP   0xAA
     RET
 
 ;

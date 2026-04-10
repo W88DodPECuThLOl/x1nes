@@ -2,24 +2,26 @@
 #include "emulator.h"
 // #include "utils.h"
 
-static u16 get_address(c6502* ctx);
-static u16 read_abs_address(Memory* mem, u16 offset);
-static void set_ZN(c6502* ctx, u8 value);
-static void fast_set_ZN(c6502* ctx, u8 value);
-static u8 shift_l(c6502* ctx, u8 val);
-static u8 shift_r(c6502* ctx, u8 val);
-static u8 rot_l(c6502* ctx, u8 val);
-static u8 rot_r(c6502* ctx, u8 val);
-static void push(c6502* ctx, u8 value);
-static void push_address(c6502* ctx, u16 address);
-static u8 pop(c6502* ctx);
-static u16 pop_address(c6502* ctx);
-static void branch(c6502* ctx, u8 mask, u8 predicate);
-static void prep_branch(c6502* ctx);
+extern Emulator gEmulator;
+
+static u16 get_address();
+static u16 read_abs_address(u16 offset);
+static void set_ZN(u8 value);
+static void fast_set_ZN(u8 value);
+static u8 shift_l(u8 val);
+static u8 shift_r(u8 val);
+static u8 rot_l(u8 val);
+static u8 rot_r(u8 val);
+static void push(u8 value);
+static void push_address(u16 address);
+static u8 pop();
+static u16 pop_address();
+static void branch(u8 mask, u8 predicate);
+static void prep_branch();
 static u8 has_page_break(u16 addr1, u16 addr2);
-static void interrupt_(c6502* ctx);
-static void poll_interrupt(c6502* ctx);
-static void rti(c6502* ctx);
+static void interrupt_();
+static void poll_interrupt();
+static void rti();
 
 static const Instruction instructionLookup[256] =
 {
@@ -88,516 +90,517 @@ static const u8 cycleLookup[256] = {
 
 void init_cpu(struct Emulator* emulator){
     struct c6502* cpu = &emulator->cpu;
-    cpu->emulator = emulator;
-    cpu->interrupt = NOI;
-    set_cpu_mode(cpu, CPU_EXEC); // Normal execution
-    cpu->memory = &emulator->mem;
-    cpu->sr_started = 0;
-    cpu->NMI_hook = nullptr;
+    gEmulator.cpu.emulator = emulator;
+    gEmulator.cpu.interrupt = NOI;
+    set_cpu_mode(CPU_EXEC); // Normal execution
+    gEmulator.cpu.memory = &emulator->mem;
+    gEmulator.cpu.sr_started = 0;
+    gEmulator.cpu.NMI_hook = nullptr;
 
-    cpu->ac = cpu->x = cpu->y = cpu->state = 0;
-    cpu->cycles = cpu->dma_cycles = 0;
-    cpu->odd_cycle = 0; //cpu->t_cycles = 0;
-    cpu->sr = 0x24;
-    cpu->sp = 0xfd;
+    gEmulator.cpu.ac = gEmulator.cpu.x = gEmulator.cpu.y = gEmulator.cpu.state = 0;
+    gEmulator.cpu.cycles = gEmulator.cpu.dma_cycles = 0;
+    gEmulator.cpu.odd_cycle = 0;
+    gEmulator.cpu.t_cycles = 0;
+    gEmulator.cpu.sr = 0x24;
+    gEmulator.cpu.sp = 0xfd;
 #if TRACER == 1 && PROFILE == 0
-    cpu->pc = 0xC000;
+    gEmulator.cpu.pc = 0xC000;
 #else
-    cpu->pc = read_abs_address(cpu->memory, RESET_ADDRESS);
+    gEmulator.cpu.pc = read_abs_address(RESET_ADDRESS);
 #endif
 }
 
-void reset_cpu(c6502* cpu){
-    cpu->sr |= INTERRUPT;
-    set_cpu_mode(cpu, CPU_EXEC);; // Normal execution
-    cpu->sp -= 3;
-    cpu->pc = read_abs_address(cpu->memory, RESET_ADDRESS);
-    cpu->cycles = 0;
-    cpu->dma_cycles = 0;
-    cpu->sr_started = 0;
-    cpu->NMI_hook = nullptr;
+void reset_cpu(){
+    gEmulator.cpu.sr |= INTERRUPT;
+    set_cpu_mode(CPU_EXEC);; // Normal execution
+    gEmulator.cpu.sp -= 3;
+    gEmulator.cpu.pc = read_abs_address(RESET_ADDRESS);
+    gEmulator.cpu.cycles = 0;
+    gEmulator.cpu.dma_cycles = 0;
+    gEmulator.cpu.sr_started = 0;
+    gEmulator.cpu.NMI_hook = nullptr;
 }
 
-u8 run_cpu_subroutine(c6502* ctx, u16 address) {
-    if (ctx->mode & CPU_SR_ANY) {
+u8 run_cpu_subroutine(u16 address) {
+    if (gEmulator.cpu.mode & CPU_SR_ANY) {
         // unable to begin subroutine because there is an executing subroutine and/or ISR
-        LOG(TRACE, "Unable to start subroutine $%4x, pending subroutine %x",address, ctx->sub_address);
+        LOG(TRACE, "Unable to start subroutine $%4x, pending subroutine %x",address, gEmulator.cpu.sub_address);
         return CPU_SR;
     }
-    ctx->sub_address = address;
-    set_cpu_mode(ctx, ctx->mode | CPU_SR);
-    LOG(TRACE, "Running subroutine: $%4x",ctx->sub_address);
+    gEmulator.cpu.sub_address = address;
+    set_cpu_mode( gEmulator.cpu.mode | CPU_SR);
+    LOG(TRACE, "Running subroutine: $%4x",gEmulator.cpu.sub_address);
     return 0;
 }
 
-void set_cpu_mode(c6502* ctx, CPUMode mode) {
-    ctx->mode = mode;
+void set_cpu_mode(CPUMode mode) {
+    gEmulator.cpu.mode = mode;
     LOG(TRACE, "CPU mode: %d",mode);
 }
 
-static void interrupt_(c6502* ctx){
+static void interrupt_(){
     // handle interrupt
     u16 addr;
     u8 set_brk = 0;
 
-    if(ctx->interrupt & BRK_I) {
+    if(gEmulator.cpu.interrupt & BRK_I) {
         // BRK instruction is 2 bytes
-        ctx->pc++;
-        if(ctx->state & NMI_HIJACK) {
+        gEmulator.cpu.pc++;
+        if(gEmulator.cpu.state & NMI_HIJACK) {
             addr = NMI_ADDRESS;
-            ctx->interrupt &= ~NMI;
+            gEmulator.cpu.interrupt &= ~NMI;
         }else {
             addr = IRQ_ADDRESS;
         }
-        ctx->interrupt &= ~BRK_I;
+        gEmulator.cpu.interrupt &= ~BRK_I;
         // re-apply Break flag
         set_brk = 1;
     }
-    else if(ctx->interrupt & NMI) {
+    else if(gEmulator.cpu.interrupt & NMI) {
         addr = NMI_ADDRESS;
         // NMI is edge triggered so clear it
-        ctx->interrupt &= ~NMI;
+        gEmulator.cpu.interrupt &= ~NMI;
     }
-    else if(ctx->interrupt & RSI){
+    else if(gEmulator.cpu.interrupt & RSI){
         addr = RESET_ADDRESS;
         // not used but just in case
-        interrupt_clear(ctx, RSI);
+        interrupt_clear( RSI);
     }
-    else if(ctx->interrupt & IRQ) {
+    else if(gEmulator.cpu.interrupt & IRQ) {
         addr = IRQ_ADDRESS;
-        // ctx->sr |= BREAK;
+        // gEmulator.cpu.sr |= BREAK;
     } else {
         LOG(ERROR, "No interrupt set");
         return;
     }
 
-    push_address(ctx, ctx->pc);
+    push_address( gEmulator.cpu.pc);
     // bit 5 always set, bit 4 set on BRK
-    push(ctx, ctx->sr & ~(1<<4) | (1<<5) | (set_brk ? (1<<4) : 0));
-    ctx->sr |= INTERRUPT;
-    ctx->pc = read_abs_address(ctx->memory, addr);
-    if (addr == NMI_ADDRESS && ctx->NMI_hook != nullptr) {
+    push( gEmulator.cpu.sr & ~(1<<4) | (1<<5) | (set_brk ? (1<<4) : 0));
+    gEmulator.cpu.sr |= INTERRUPT;
+    gEmulator.cpu.pc = read_abs_address(addr);
+    if (addr == NMI_ADDRESS && gEmulator.cpu.NMI_hook != nullptr) {
         // call NMI hook for phase 0 (pre ISR)
-        push_address(ctx, ctx->sub_address);
-        ctx->NMI_hook(ctx, 0);
-        ctx->sr_started = 0;
-        LOG(TRACE, "NMI wrapper at $%4x", ctx->sub_address);
-        set_cpu_mode(ctx, ctx->mode | CPU_NMI_SR);
+        push_address( gEmulator.cpu.sub_address);
+        gEmulator.cpu.NMI_hook(0);
+        gEmulator.cpu.sr_started = 0;
+        LOG(TRACE, "NMI wrapper at $%4x", gEmulator.cpu.sub_address);
+        set_cpu_mode( gEmulator.cpu.mode | CPU_NMI_SR);
     }
 }
 
-static void rti(c6502* ctx) {
+static void rti() {
     // ignore bit 4 and 5
-    ctx->sr &= ((1<<4) | (1<<5));
-    ctx->sr |= pop(ctx) & ~((1<<4) | (1<<5));
-    ctx->pc = pop_address(ctx);
+    gEmulator.cpu.sr &= ((1<<4) | (1<<5));
+    gEmulator.cpu.sr |= pop() & ~((1<<4) | (1<<5));
+    gEmulator.cpu.pc = pop_address();
     // hopefully intrinsic 6502 x-tics will allow this to be enough
     // i.e. no ISR nesting
-    if (ctx->mode & CPU_ISR) {
+    if (gEmulator.cpu.mode & CPU_ISR) {
         LOG(TRACE, "ISR completed");
-        set_cpu_mode(ctx, ctx->mode & ~CPU_ISR);
+        set_cpu_mode( gEmulator.cpu.mode & ~CPU_ISR);
     }
 }
 
-void interrupt(c6502* ctx, const Interrupt code) {
+void interrupt(const Interrupt code) {
     if(code == NMI) {
-        if(!ctx->NMI_line) {
-            ctx->interrupt |= NMI;
+        if(!gEmulator.cpu.NMI_line) {
+            gEmulator.cpu.interrupt |= NMI;
         }
-        ctx->NMI_line = 1;
+        gEmulator.cpu.NMI_line = 1;
     }else {
-        ctx->interrupt |= code;
+        gEmulator.cpu.interrupt |= code;
     }
 }
-void interrupt_clear(c6502* ctx, const Interrupt code) {
-    if(code == NMI) ctx->NMI_line = 0;
-    else ctx->interrupt &= ~code;
+void interrupt_clear(const Interrupt code) {
+    if(code == NMI) gEmulator.cpu.NMI_line = 0;
+    else gEmulator.cpu.interrupt &= ~code;
 }
 
-void do_DMA(c6502* ctx, u16 cycles) {
-    ctx->dma_cycles += cycles;
-    ctx->state |= DMA_OCCURRED;
+void do_DMA(u16 cycles) {
+    gEmulator.cpu.dma_cycles += cycles;
+    gEmulator.cpu.state |= DMA_OCCURRED;
 }
 
-static void branch(c6502* ctx, u8 mask, u8 predicate) {
-    if(((ctx->sr & mask) > 0) == predicate){
+static void branch(u8 mask, u8 predicate) {
+    if(((gEmulator.cpu.sr & mask) > 0) == predicate){
         // increment cycles if branching to a different page
-        ctx->cycles += has_page_break(ctx->pc, ctx->address);
-        ctx->cycles++;
+        gEmulator.cpu.cycles += has_page_break(gEmulator.cpu.pc, gEmulator.cpu.address);
+        gEmulator.cpu.cycles++;
         // tell the cpu to perform a branch when it is ready
-        ctx->state |= BRANCH_STATE;
+        gEmulator.cpu.state |= BRANCH_STATE;
     }else {
         // remove branch state
-        ctx->state &= ~BRANCH_STATE;
+        gEmulator.cpu.state &= ~BRANCH_STATE;
     }
 }
 
-static void prep_branch(c6502* ctx){
-    switch(ctx->instruction->opcode){
+static void prep_branch(){
+    switch(gEmulator.cpu.instruction->opcode){
         case BCC:
-            branch(ctx, CARRY, 0);
+            branch( CARRY, 0);
             break;
         case BCS:
-            branch(ctx, CARRY, 1);
+            branch( CARRY, 1);
             break;
         case BEQ:
-            branch(ctx, ZERO, 1);
+            branch( ZERO, 1);
             break;
         case BMI:
-            branch(ctx, NEGATIVE, 1);
+            branch( NEGATIVE, 1);
             break;
         case BNE:
-            branch(ctx, ZERO, 0);
+            branch( ZERO, 0);
             break;
         case BPL:
-            branch(ctx, NEGATIVE, 0);
+            branch( NEGATIVE, 0);
             break;
         case BVC:
-            branch(ctx, OVERFLW, 0);
+            branch( OVERFLW, 0);
             break;
         case BVS:
-            branch(ctx, OVERFLW, 1);
+            branch( OVERFLW, 1);
             break;
         default:
-            ctx->state &= ~BRANCH_STATE;
+            gEmulator.cpu.state &= ~BRANCH_STATE;
     }
 }
 
-static void poll_interrupt(c6502* ctx) {
-    ctx->state |= INTERRUPT_POLLED;
-    if(ctx->interrupt & ~IRQ || (ctx->interrupt & IRQ && !(ctx->sr & INTERRUPT))){
+static void poll_interrupt() {
+    gEmulator.cpu.state |= INTERRUPT_POLLED;
+    if(gEmulator.cpu.interrupt & ~IRQ || (gEmulator.cpu.interrupt & IRQ && !(gEmulator.cpu.sr & INTERRUPT))){
         // prepare for interrupts
-        ctx->state |= INTERRUPT_PENDING;
+        gEmulator.cpu.state |= INTERRUPT_PENDING;
         // check if NMI is asserted at poll time
-        ctx->state |= ctx->interrupt & NMI ? NMI_ASSERTED : 0;
+        gEmulator.cpu.state |= gEmulator.cpu.interrupt & NMI ? NMI_ASSERTED : 0;
     }
 }
 
-void execute(c6502* ctx){
-    ctx->odd_cycle ^= 1;
-//    ctx->t_cycles++;
-    if (ctx->dma_cycles != 0){
+void execute(){
+    gEmulator.cpu.odd_cycle ^= 1;
+    gEmulator.cpu.t_cycles++;
+    if (gEmulator.cpu.dma_cycles != 0){
         // DMA CPU suspend
-        ctx->dma_cycles--;
+        gEmulator.cpu.dma_cycles--;
         return;
     }
-    if(ctx->cycles == 0) {
-        if (!ctx->mode) {
+    if(gEmulator.cpu.cycles == 0) {
+        if (!gEmulator.cpu.mode) {
             // cpu wait mode
             return;
         }
         // if there is a pending ISR, we wait before we start the subroutine unless it is NMI
-        if ((ctx->mode & CPU_NMI_SR || (ctx->mode & (CPU_SR | CPU_ISR)) == CPU_SR) && ctx->sr_started == 0) {
+        if ((gEmulator.cpu.mode & CPU_NMI_SR || (gEmulator.cpu.mode & (CPU_SR | CPU_ISR)) == CPU_SR) && gEmulator.cpu.sr_started == 0) {
             // we just started cpu subroutine mode
             // let's do a manual JSR to sub_address
-            push_address(ctx, ctx->pc);
-            push_address(ctx, SENTINEL_ADDR);
-            ctx->pc = ctx->sub_address;
-            ctx->sr_started = 1;
+            push_address( gEmulator.cpu.pc);
+            push_address( SENTINEL_ADDR);
+            gEmulator.cpu.pc = gEmulator.cpu.sub_address;
+            gEmulator.cpu.sr_started = 1;
         }
 
 #if TRACER == 1
-        print_cpu_trace(ctx);
+        print_cpu_trace();
 #endif
-        if(!(ctx->state & INTERRUPT_POLLED)) {
-            poll_interrupt(ctx);
+        if(!(gEmulator.cpu.state & INTERRUPT_POLLED)) {
+            poll_interrupt();
         }
-        ctx->state &= ~(INTERRUPT_POLLED | NMI_HIJACK | DMA_OCCURRED);
-        if(ctx->state & INTERRUPT_PENDING) {
+        gEmulator.cpu.state &= ~(INTERRUPT_POLLED | NMI_HIJACK | DMA_OCCURRED);
+        if(gEmulator.cpu.state & INTERRUPT_PENDING) {
             // takes 7 cycles and this is one of them so only 6 are left
-            LOG(TRACE, "Starting ISR: $%2x", ctx->interrupt);
-            ctx->cycles = 6;
-            set_cpu_mode(ctx, ctx->mode | CPU_ISR);
+            LOG(TRACE, "Starting ISR: $%2x", gEmulator.cpu.interrupt);
+            gEmulator.cpu.cycles = 6;
+            set_cpu_mode( gEmulator.cpu.mode | CPU_ISR);
             return;
         }
-        if (!(ctx->mode & CPU_EXEC_ANY)) {
+        if (!(gEmulator.cpu.mode & CPU_EXEC_ANY)) {
             // busy wait if not in any execution mode
             return;
         }
 
-        u8 opcode = read_mem(ctx->memory, ctx->pc++);
-        ctx->instruction = &instructionLookup[opcode];
-        ctx->address = get_address(ctx);
-        if(ctx->instruction->opcode == BRK) {
+        u8 opcode = read_mem(gEmulator.cpu.pc++);
+        gEmulator.cpu.instruction = &instructionLookup[opcode];
+        gEmulator.cpu.address = get_address();
+        if(gEmulator.cpu.instruction->opcode == BRK) {
             // set BRK interrupt
-            ctx->interrupt |= BRK_I;
-            ctx->state |= INTERRUPT_PENDING;
-            ctx->cycles = 6;
+            gEmulator.cpu.interrupt |= BRK_I;
+            gEmulator.cpu.state |= INTERRUPT_PENDING;
+            gEmulator.cpu.cycles = 6;
             return;
         }
-        ctx->cycles += cycleLookup[opcode];
+        gEmulator.cpu.cycles += cycleLookup[opcode];
         // prepare for branching and adjust cycles accordingly
-        prep_branch(ctx);
-        ctx->cycles--;
+        prep_branch();
+        gEmulator.cpu.cycles--;
         return;
     }
 
-    if(ctx->cycles == 1){
-        ctx->cycles--;
+    if(gEmulator.cpu.cycles == 1){
+        gEmulator.cpu.cycles--;
         // proceed to execution
     } else{
         // delay execution
-        if(ctx->state & INTERRUPT_PENDING && ctx->cycles == 4) {
-            if(ctx->interrupt & NMI) ctx->state |= NMI_HIJACK;
+        if(gEmulator.cpu.state & INTERRUPT_PENDING && gEmulator.cpu.cycles == 4) {
+            if(gEmulator.cpu.interrupt & NMI) gEmulator.cpu.state |= NMI_HIJACK;
         }
-        ctx->cycles--;
+        gEmulator.cpu.cycles--;
         return;
     }
 
     // handle interrupt
-    if(ctx->state & INTERRUPT_PENDING) {
-        interrupt_(ctx);
-        ctx->state &= ~INTERRUPT_PENDING;
+    if(gEmulator.cpu.state & INTERRUPT_PENDING) {
+        interrupt_();
+        gEmulator.cpu.state &= ~INTERRUPT_PENDING;
         return;
     }
 
-    u16 address = ctx->address;
+    u16 address = gEmulator.cpu.address;
 
-    switch (ctx->instruction->opcode) {
+    switch (gEmulator.cpu.instruction->opcode) {
 
         // Load and store opcodes
 
         case LDA:
-            ctx->ac = read_mem(ctx->memory, address);
-            set_ZN(ctx, ctx->ac);
+            gEmulator.cpu.ac = read_mem(address);
+            set_ZN( gEmulator.cpu.ac);
             break;
         case LDX:
-            ctx->x = read_mem(ctx->memory, address);
-            set_ZN(ctx, ctx->x);
+            gEmulator.cpu.x = read_mem(address);
+            set_ZN( gEmulator.cpu.x);
             break;
         case LDY:
-            ctx->y = read_mem(ctx->memory, address);
-            set_ZN(ctx, ctx->y);
+            gEmulator.cpu.y = read_mem(address);
+            set_ZN( gEmulator.cpu.y);
             break;
         case STA:
-            write_mem(ctx->memory, address, ctx->ac);
+            write_mem(address, gEmulator.cpu.ac);
             break;
         case STY:
-            write_mem(ctx->memory, address, ctx->y);
+            write_mem(address, gEmulator.cpu.y);
             break;
         case STX:
-            write_mem(ctx->memory, address, ctx->x);
+            write_mem(address, gEmulator.cpu.x);
             break;
 
         // Register transfer opcodes
 
         case TAX:
-            ctx->x = ctx->ac;
-            set_ZN(ctx, ctx->x);
+            gEmulator.cpu.x = gEmulator.cpu.ac;
+            set_ZN( gEmulator.cpu.x);
             break;
         case TAY:
-            ctx->y = ctx->ac;
-            set_ZN(ctx, ctx->y);
+            gEmulator.cpu.y = gEmulator.cpu.ac;
+            set_ZN( gEmulator.cpu.y);
             break;
         case TXA:
-            ctx->ac = ctx->x;
-            set_ZN(ctx, ctx->ac);
+            gEmulator.cpu.ac = gEmulator.cpu.x;
+            set_ZN( gEmulator.cpu.ac);
             break;
         case TYA:
-            ctx->ac = ctx->y;
-            set_ZN(ctx, ctx->ac);
+            gEmulator.cpu.ac = gEmulator.cpu.y;
+            set_ZN( gEmulator.cpu.ac);
             break;
 
         // stack opcodes
 
         case TSX:
-            ctx->x = ctx->sp;
-            set_ZN(ctx, ctx->x);
+            gEmulator.cpu.x = gEmulator.cpu.sp;
+            set_ZN( gEmulator.cpu.x);
             break;
         case TXS:
-            ctx->sp = ctx->x;
+            gEmulator.cpu.sp = gEmulator.cpu.x;
             break;
         case PHA:
-            push(ctx, ctx->ac);
+            push( gEmulator.cpu.ac);
             break;
         case PHP:
             // 6502 quirk bit 4 and 5 are always set by this instruction: see also BRK
-            push(ctx, ctx->sr | (1<<4) | (1<<5));
+            push( gEmulator.cpu.sr | (1<<4) | (1<<5));
             break;
         case PLA:
-            ctx->ac = pop(ctx);
-            set_ZN(ctx, ctx->ac);
+            gEmulator.cpu.ac = pop();
+            set_ZN( gEmulator.cpu.ac);
             break;
         case PLP:
             // poll before updating I flag
-            poll_interrupt(ctx);
-            ctx->sr = pop(ctx);
+            poll_interrupt();
+            gEmulator.cpu.sr = pop();
             break;
 
         // logical opcodes
 
         case AND:
-            ctx->ac &= read_mem(ctx->memory, address);
-            set_ZN(ctx, ctx->ac);
+            gEmulator.cpu.ac &= read_mem(address);
+            set_ZN( gEmulator.cpu.ac);
             break;
         case EOR:
-            ctx->ac ^= read_mem(ctx->memory, address);
-            set_ZN(ctx, ctx->ac);
+            gEmulator.cpu.ac ^= read_mem(address);
+            set_ZN( gEmulator.cpu.ac);
             break;
         case ORA:
-            ctx->ac |= read_mem(ctx->memory, address);
-            set_ZN(ctx, ctx->ac);
+            gEmulator.cpu.ac |= read_mem(address);
+            set_ZN( gEmulator.cpu.ac);
             break;
         case BIT: {
-            u8 opr = read_mem(ctx->memory, address);
-            ctx->sr &= ~(NEGATIVE | OVERFLW | ZERO);
-            ctx->sr |= (!(opr & ctx->ac) ? ZERO: 0);
-            ctx->sr |= (opr & (NEGATIVE | OVERFLW));
+            u8 opr = read_mem(address);
+            gEmulator.cpu.sr &= ~(NEGATIVE | OVERFLW | ZERO);
+            gEmulator.cpu.sr |= (!(opr & gEmulator.cpu.ac) ? ZERO: 0);
+            gEmulator.cpu.sr |= (opr & (NEGATIVE | OVERFLW));
             break;
         }
 
         // Arithmetic opcodes
 
         case ADC: {
-            u8 opr = read_mem(ctx->memory, address);
-            u16 sum = ctx->ac + opr + ((ctx->sr & CARRY) != 0);
-            ctx->sr &= ~(CARRY | OVERFLW | NEGATIVE | ZERO);
-            ctx->sr |= (sum & 0xFF00 ? CARRY: 0);
-            ctx->sr |= ((ctx->ac ^ sum) & (opr ^ sum) & 0x80) ? OVERFLW: 0;
-            ctx->ac = sum;
-            fast_set_ZN(ctx, ctx->ac);
+            u8 opr = read_mem(address);
+            u16 sum = gEmulator.cpu.ac + opr + ((gEmulator.cpu.sr & CARRY) != 0);
+            gEmulator.cpu.sr &= ~(CARRY | OVERFLW | NEGATIVE | ZERO);
+            gEmulator.cpu.sr |= (sum & 0xFF00 ? CARRY: 0);
+            gEmulator.cpu.sr |= ((gEmulator.cpu.ac ^ sum) & (opr ^ sum) & 0x80) ? OVERFLW: 0;
+            gEmulator.cpu.ac = sum;
+            fast_set_ZN( gEmulator.cpu.ac);
             break;
         }
         case SBC: {
-            u8 opr = read_mem(ctx->memory, address);
-            u16 diff = ctx->ac - opr - ((ctx->sr & CARRY) == 0);
-            ctx->sr &= ~(CARRY | OVERFLW | NEGATIVE | ZERO);
-            ctx->sr |= (!(diff & 0xFF00)) ? CARRY : 0;
-            ctx->sr |= ((ctx->ac ^ diff) & (~opr ^ diff) & 0x80) ? OVERFLW: 0;
-            ctx->ac = diff;
-            fast_set_ZN(ctx, ctx->ac);
+            u8 opr = read_mem(address);
+            u16 diff = gEmulator.cpu.ac - opr - ((gEmulator.cpu.sr & CARRY) == 0);
+            gEmulator.cpu.sr &= ~(CARRY | OVERFLW | NEGATIVE | ZERO);
+            gEmulator.cpu.sr |= (!(diff & 0xFF00)) ? CARRY : 0;
+            gEmulator.cpu.sr |= ((gEmulator.cpu.ac ^ diff) & (~opr ^ diff) & 0x80) ? OVERFLW: 0;
+            gEmulator.cpu.ac = diff;
+            fast_set_ZN( gEmulator.cpu.ac);
             break;
         }
         case CMP: {
-            u16 diff = ctx->ac - read_mem(ctx->memory, address);
-            ctx->sr &= ~(CARRY | NEGATIVE | ZERO);
-            ctx->sr |= !(diff & 0xFF00) ? CARRY: 0;
-            fast_set_ZN(ctx, diff);
+            u16 diff = gEmulator.cpu.ac - read_mem(address);
+            gEmulator.cpu.sr &= ~(CARRY | NEGATIVE | ZERO);
+            gEmulator.cpu.sr |= !(diff & 0xFF00) ? CARRY: 0;
+            fast_set_ZN( diff);
             break;
         }
         case CPX: {
-            u16 diff = ctx->x - read_mem(ctx->memory, address);
-            ctx->sr &= ~(CARRY | NEGATIVE | ZERO);
-            ctx->sr |= !(diff & 0x100) ? CARRY: 0;
-            fast_set_ZN(ctx, diff);
+            u16 diff = gEmulator.cpu.x - read_mem(address);
+            gEmulator.cpu.sr &= ~(CARRY | NEGATIVE | ZERO);
+            gEmulator.cpu.sr |= !(diff & 0x100) ? CARRY: 0;
+            fast_set_ZN( diff);
             break;
         }
         case CPY: {
-            u16 diff = ctx->y - read_mem(ctx->memory, address);
-            ctx->sr &= ~(CARRY | NEGATIVE | ZERO);
-            ctx->sr |= !(diff & 0xFF00) ? CARRY: 0;
-            fast_set_ZN(ctx, diff);
+            u16 diff = gEmulator.cpu.y - read_mem(address);
+            gEmulator.cpu.sr &= ~(CARRY | NEGATIVE | ZERO);
+            gEmulator.cpu.sr |= !(diff & 0xFF00) ? CARRY: 0;
+            fast_set_ZN( diff);
             break;
         }
 
         // Increments and decrements opcodes
 
         case DEC:{
-            u8 m = read_mem(ctx->memory, address);
+            u8 m = read_mem(address);
             // dummy write
-            write_mem(ctx->memory, address, m--);
-            write_mem(ctx->memory, address, m);
-            set_ZN(ctx, m);
+            write_mem(address, m--);
+            write_mem(address, m);
+            set_ZN( m);
             break;
         }
         case DEX:
-            ctx->x--;
-            set_ZN(ctx, ctx->x);
+            gEmulator.cpu.x--;
+            set_ZN( gEmulator.cpu.x);
             break;
         case DEY:
-            ctx->y--;
-            set_ZN(ctx, ctx->y);
+            gEmulator.cpu.y--;
+            set_ZN( gEmulator.cpu.y);
             break;
         case INC:{
-            u8 m = read_mem(ctx->memory, address);
+            u8 m = read_mem(address);
             // dummy write
-            write_mem(ctx->memory, address, m++);
-            write_mem(ctx->memory, address, m);
-            set_ZN(ctx, m);
+            write_mem(address, m++);
+            write_mem(address, m);
+            set_ZN( m);
             break;
         }
         case INX:
-            ctx->x++;
-            set_ZN(ctx, ctx->x);
+            gEmulator.cpu.x++;
+            set_ZN( gEmulator.cpu.x);
             break;
         case INY:
-            ctx->y++;
-            set_ZN(ctx, ctx->y);
+            gEmulator.cpu.y++;
+            set_ZN( gEmulator.cpu.y);
             break;
 
         // shifts and rotations opcodes
 
         case ASL:
-            if(ctx->instruction->mode == ACC) {
-                ctx->ac = shift_l(ctx, ctx->ac);
+            if(gEmulator.cpu.instruction->mode == ACC) {
+                gEmulator.cpu.ac = shift_l( gEmulator.cpu.ac);
             }else{
-                u8 m = read_mem(ctx->memory, address);
+                u8 m = read_mem(address);
                 // dummy write
-                write_mem(ctx->memory, address, m);
-                write_mem(ctx->memory, address, shift_l(ctx, m));
+                write_mem(address, m);
+                write_mem(address, shift_l( m));
             }
             break;
         case LSR:
-            if(ctx->instruction->mode == ACC) {
-                ctx->ac = shift_r(ctx, ctx->ac);
+            if(gEmulator.cpu.instruction->mode == ACC) {
+                gEmulator.cpu.ac = shift_r( gEmulator.cpu.ac);
             }else{
-                u8 m = read_mem(ctx->memory, address);
+                u8 m = read_mem(address);
                 // dummy write
-                write_mem(ctx->memory, address, m);
-                write_mem(ctx->memory, address, shift_r(ctx, m));
+                write_mem(address, m);
+                write_mem(address, shift_r( m));
             }
             break;
         case ROL:
-            if(ctx->instruction->mode == ACC){
-                ctx->ac = rot_l(ctx, ctx->ac);
+            if(gEmulator.cpu.instruction->mode == ACC){
+                gEmulator.cpu.ac = rot_l( gEmulator.cpu.ac);
             }else{
-                u8 m = read_mem(ctx->memory, address);
+                u8 m = read_mem(address);
                 // dummy write
-                write_mem(ctx->memory, address, m);
-                write_mem(ctx->memory, address, rot_l(ctx, m));
+                write_mem(address, m);
+                write_mem(address, rot_l( m));
             }
             break;
         case ROR:
-            if(ctx->instruction->mode == ACC){
-                ctx->ac = rot_r(ctx, ctx->ac);
+            if(gEmulator.cpu.instruction->mode == ACC){
+                gEmulator.cpu.ac = rot_r( gEmulator.cpu.ac);
             }else{
-                u8 m = read_mem(ctx->memory, address);
+                u8 m = read_mem(address);
                 // dummy write
-                write_mem(ctx->memory, address, m);
-                write_mem(ctx->memory, address, rot_r(ctx, m));
+                write_mem(address, m);
+                write_mem(address, rot_r( m));
             }
             break;
 
         // jumps and calls
 
         case JMP:
-            ctx->pc = address;
-            ctx->memory->bus = ctx->pc >> 8;
+            gEmulator.cpu.pc = address;
+            gEmulator.cpu.memory->bus = gEmulator.cpu.pc >> 8;
             break;
         case JSR:
-            push_address(ctx, ctx->pc - 1);
-            ctx->pc = address;
-            ctx->memory->bus = ctx->pc >> 8;
+            push_address( gEmulator.cpu.pc - 1);
+            gEmulator.cpu.pc = address;
+            gEmulator.cpu.memory->bus = gEmulator.cpu.pc >> 8;
             break;
         case RTS:
-            ctx->pc = pop_address(ctx) + 1;
-            ctx->memory->bus = ctx->pc >> 8;
+            gEmulator.cpu.pc = pop_address() + 1;
+            gEmulator.cpu.memory->bus = gEmulator.cpu.pc >> 8;
             // Keep track of external subroutine
-            if ((ctx->mode & CPU_SR_ANY) && ctx->pc == SENTINEL_ADDR + 1) {
-                ctx->pc = pop_address(ctx);
-                ctx->memory->bus = ctx->pc >> 8;
-                if (ctx->mode & CPU_NMI_SR) {
-                    if (ctx->NMI_hook != nullptr) ctx->NMI_hook(ctx, 1);
-                    LOG(TRACE, "NMI wrapper at $%4x ended", ctx->sub_address);
-                    ctx->sub_address = pop_address(ctx);
-                    set_cpu_mode(ctx, ctx->mode & ~CPU_NMI_SR);
-                    if (!(ctx->mode & CPU_SR)) ctx->sr_started = 0;
+            if ((gEmulator.cpu.mode & CPU_SR_ANY) && gEmulator.cpu.pc == SENTINEL_ADDR + 1) {
+                gEmulator.cpu.pc = pop_address();
+                gEmulator.cpu.memory->bus = gEmulator.cpu.pc >> 8;
+                if (gEmulator.cpu.mode & CPU_NMI_SR) {
+                    if (gEmulator.cpu.NMI_hook != nullptr) gEmulator.cpu.NMI_hook( 1);
+                    LOG(TRACE, "NMI wrapper at $%4x ended", gEmulator.cpu.sub_address);
+                    gEmulator.cpu.sub_address = pop_address();
+                    set_cpu_mode( gEmulator.cpu.mode & ~CPU_NMI_SR);
+                    if (!(gEmulator.cpu.mode & CPU_SR)) gEmulator.cpu.sr_started = 0;
                     // end NMI
-                    rti(ctx);
+                    rti();
                 }else {
-                    LOG(TRACE, "Exiting subroutine $%4x", ctx->sub_address);
-                    set_cpu_mode(ctx, ctx->mode & ~CPU_SR);
-                    ctx->sr_started = 0;
+                    LOG(TRACE, "Exiting subroutine $%4x", gEmulator.cpu.sub_address);
+                    set_cpu_mode( gEmulator.cpu.mode & ~CPU_SR);
+                    gEmulator.cpu.sr_started = 0;
                 }
             }
             break;
@@ -605,37 +608,37 @@ void execute(c6502* ctx){
         // branching opcodes
 
         case BCC:case BCS:case BEQ:case BMI:case BNE:case BPL:case BVC:case BVS:
-            if(ctx->state & BRANCH_STATE) {
-                ctx->pc = ctx->address;
-                ctx->state &= ~BRANCH_STATE;
+            if(gEmulator.cpu.state & BRANCH_STATE) {
+                gEmulator.cpu.pc = gEmulator.cpu.address;
+                gEmulator.cpu.state &= ~BRANCH_STATE;
             }
             break;
 
         // status flag changes
 
         case CLC:
-            ctx->sr &= ~CARRY;
+            gEmulator.cpu.sr &= ~CARRY;
             break;
         case CLD:
-            ctx->sr &= ~DECIMAL_;
+            gEmulator.cpu.sr &= ~DECIMAL_;
             break;
         case CLI:
             // poll before updating I flag
-            poll_interrupt(ctx);
-            ctx->sr &= ~INTERRUPT;
+            poll_interrupt();
+            gEmulator.cpu.sr &= ~INTERRUPT;
             break;
         case CLV:
-            ctx->sr &= ~OVERFLW;
+            gEmulator.cpu.sr &= ~OVERFLW;
             break;
         case SEC:
-            ctx->sr |= CARRY;
+            gEmulator.cpu.sr |= CARRY;
             break;
         case SED:
-            ctx->sr |= DECIMAL_;
+            gEmulator.cpu.sr |= DECIMAL_;
             break;
         case SEI:
-            poll_interrupt(ctx);
-            ctx->sr |= INTERRUPT;
+            poll_interrupt();
+            gEmulator.cpu.sr |= INTERRUPT;
             break;
 
         // system functions
@@ -644,12 +647,12 @@ void execute(c6502* ctx){
             // Handled in interrupt_()
             break;
         case RTI:
-            rti(ctx);
+            rti();
             break;
         case NOP:
-            if(ctx->instruction->mode == ABS) {
+            if(gEmulator.cpu.instruction->mode == ABS) {
                 // dummy read edge case for unofficial opcode Ox0C
-                read_mem(ctx->memory, address);
+                read_mem(address);
             }
             break;
 
@@ -659,124 +662,124 @@ void execute(c6502* ctx){
             // Unstable instruction.
             // A <- A & (const | M), A <- LSR A
             // magic const set to 0x00 but, could also be 0xff, 0xee, ..., 0x11 depending on analog effects
-            ctx->ac &= read_mem(ctx->memory, address);
-            ctx->ac = shift_r(ctx, ctx->ac);
+            gEmulator.cpu.ac &= read_mem(address);
+            gEmulator.cpu.ac = shift_r( gEmulator.cpu.ac);
             break;
         case ANC:
-            ctx->ac = ctx->ac & read_mem(ctx->memory, address);
-            ctx->sr &= ~(CARRY | ZERO | NEGATIVE);
-            ctx->sr |= (ctx->ac & NEGATIVE) ? (CARRY | NEGATIVE): 0;
-            ctx->sr |= ((!ctx->ac)? ZERO: 0);
+            gEmulator.cpu.ac = gEmulator.cpu.ac & read_mem(address);
+            gEmulator.cpu.sr &= ~(CARRY | ZERO | NEGATIVE);
+            gEmulator.cpu.sr |= (gEmulator.cpu.ac & NEGATIVE) ? (CARRY | NEGATIVE): 0;
+            gEmulator.cpu.sr |= ((!gEmulator.cpu.ac)? ZERO: 0);
             break;
         case ANE:
             // Unstable instruction.
             // A <- (A | const) & X & M
             // magic const set to 0xff but, could also be 0xee, 0xdd, ..., 0x00 depending on analog effects
-            ctx->ac = ctx->x & read_mem(ctx->memory, address);
-            set_ZN(ctx, ctx->ac);
+            gEmulator.cpu.ac = gEmulator.cpu.x & read_mem(address);
+            set_ZN( gEmulator.cpu.ac);
             break;
         case ARR: {
             // Unstable instruction.
             // A <- A & (const | M), ROR A
             // magic const set to 0x00 but, could also be 0xff, 0xee, ..., 0x11 depending on analog effects
-            u8 val = ctx->ac & read_mem(ctx->memory, address);
+            u8 val = gEmulator.cpu.ac & read_mem(address);
             u8 rotated = val >> 1;
-            rotated |= (ctx->sr & CARRY) << 7;
-            ctx->sr &= ~(CARRY | ZERO | NEGATIVE | OVERFLW);
-            ctx->sr |= (rotated & (1<<6)) ? CARRY: 0;
-            ctx->sr |= (((rotated & (1<<6)) >> 1) ^ (rotated & (1<<5))) ? OVERFLW: 0;
-            fast_set_ZN(ctx, rotated);
-            ctx->ac = rotated;
+            rotated |= (gEmulator.cpu.sr & CARRY) << 7;
+            gEmulator.cpu.sr &= ~(CARRY | ZERO | NEGATIVE | OVERFLW);
+            gEmulator.cpu.sr |= (rotated & (1<<6)) ? CARRY: 0;
+            gEmulator.cpu.sr |= (((rotated & (1<<6)) >> 1) ^ (rotated & (1<<5))) ? OVERFLW: 0;
+            fast_set_ZN( rotated);
+            gEmulator.cpu.ac = rotated;
             break;
         }
         case AXS: {
-            u8 opr = read_mem(ctx->memory, address);
-            ctx->x = ctx->x & ctx->ac;
-            u16 diff = ctx->x - opr;
-            ctx->sr &= ~(CARRY | NEGATIVE | ZERO);
-            ctx->sr |= (!(diff & 0xFF00)) ? CARRY : 0;
-            ctx->x = diff;
-            fast_set_ZN(ctx, ctx->x);
+            u8 opr = read_mem(address);
+            gEmulator.cpu.x = gEmulator.cpu.x & gEmulator.cpu.ac;
+            u16 diff = gEmulator.cpu.x - opr;
+            gEmulator.cpu.sr &= ~(CARRY | NEGATIVE | ZERO);
+            gEmulator.cpu.sr |= (!(diff & 0xFF00)) ? CARRY : 0;
+            gEmulator.cpu.x = diff;
+            fast_set_ZN( gEmulator.cpu.x);
             break;
         }
         case LAX:
             // Unstable instruction.
             // A,X <- (A | const) & M
             // magic const set to 0xff but, could also be 0xee, 0xdd, ..., 0x00 depending on analog effects
-            ctx->ac = read_mem(ctx->memory, address);
-            ctx->x = ctx->ac;
-            set_ZN(ctx, ctx->ac);
+            gEmulator.cpu.ac = read_mem(address);
+            gEmulator.cpu.x = gEmulator.cpu.ac;
+            set_ZN( gEmulator.cpu.ac);
             break;
         case SAX: {
-            write_mem(ctx->memory, address, ctx->ac & ctx->x);
+            write_mem(address, gEmulator.cpu.ac & gEmulator.cpu.x);
             break;
         }
         case DCP: {
-            u8 m = read_mem(ctx->memory, address);
+            u8 m = read_mem(address);
             // dummy write
-            write_mem(ctx->memory, address, m--);
-            write_mem(ctx->memory, address, m);
-            u16 diff = ctx->ac - read_mem(ctx->memory, address);
-            ctx->sr &= ~(CARRY | NEGATIVE | ZERO);
-            ctx->sr |= !(diff & 0xFF00) ? CARRY: 0;
-            fast_set_ZN(ctx, diff);
+            write_mem(address, m--);
+            write_mem(address, m);
+            u16 diff = gEmulator.cpu.ac - read_mem(address);
+            gEmulator.cpu.sr &= ~(CARRY | NEGATIVE | ZERO);
+            gEmulator.cpu.sr |= !(diff & 0xFF00) ? CARRY: 0;
+            fast_set_ZN( diff);
             break;
         }
         case ISB: {
-            u8 m = read_mem(ctx->memory, address);
+            u8 m = read_mem(address);
             // dummy write
-            write_mem(ctx->memory, address, m++);
-            write_mem(ctx->memory, address, m);
-            u16 diff = ctx->ac - m - ((ctx->sr & CARRY) == 0);
-            ctx->sr &= ~(CARRY | OVERFLW | NEGATIVE | ZERO);
-            ctx->sr |= (!(diff & 0xFF00)) ? CARRY : 0;
-            ctx->sr |= ((ctx->ac ^ diff) & (~m ^ diff) & 0x80) ? OVERFLW: 0;
-            ctx->ac = diff;
-            fast_set_ZN(ctx, ctx->ac);
+            write_mem(address, m++);
+            write_mem(address, m);
+            u16 diff = gEmulator.cpu.ac - m - ((gEmulator.cpu.sr & CARRY) == 0);
+            gEmulator.cpu.sr &= ~(CARRY | OVERFLW | NEGATIVE | ZERO);
+            gEmulator.cpu.sr |= (!(diff & 0xFF00)) ? CARRY : 0;
+            gEmulator.cpu.sr |= ((gEmulator.cpu.ac ^ diff) & (~m ^ diff) & 0x80) ? OVERFLW: 0;
+            gEmulator.cpu.ac = diff;
+            fast_set_ZN( gEmulator.cpu.ac);
             break;
         }
         case RLA: {
-            u8 m = read_mem(ctx->memory, address);
+            u8 m = read_mem(address);
             // dummy write
-            write_mem(ctx->memory, address, m);
-            m = rot_l(ctx, m);
-            write_mem(ctx->memory, address, m);
-            ctx->ac &= m;
-            set_ZN(ctx, ctx->ac);
+            write_mem(address, m);
+            m = rot_l( m);
+            write_mem(address, m);
+            gEmulator.cpu.ac &= m;
+            set_ZN( gEmulator.cpu.ac);
             break;
         }
         case RRA: {
-            u8 m = read_mem(ctx->memory, address);
+            u8 m = read_mem(address);
             // dummy write
-            write_mem(ctx->memory, address, m);
-            m = rot_r(ctx, m);
-            write_mem(ctx->memory, address, m);
-            u16 sum = ctx->ac + m + ((ctx->sr & CARRY) != 0);
-            ctx->sr &= ~(CARRY | OVERFLW | NEGATIVE | ZERO);
-            ctx->sr |= (sum & 0xFF00 ? CARRY : 0);
-            ctx->sr |= ((ctx->ac ^ sum) & (m ^ sum) & 0x80) ? OVERFLW : 0;
-            ctx->ac = sum;
-            fast_set_ZN(ctx, sum);
+            write_mem(address, m);
+            m = rot_r( m);
+            write_mem(address, m);
+            u16 sum = gEmulator.cpu.ac + m + ((gEmulator.cpu.sr & CARRY) != 0);
+            gEmulator.cpu.sr &= ~(CARRY | OVERFLW | NEGATIVE | ZERO);
+            gEmulator.cpu.sr |= (sum & 0xFF00 ? CARRY : 0);
+            gEmulator.cpu.sr |= ((gEmulator.cpu.ac ^ sum) & (m ^ sum) & 0x80) ? OVERFLW : 0;
+            gEmulator.cpu.ac = sum;
+            fast_set_ZN( sum);
             break;
         }
         case SLO: {
-            u8 m = read_mem(ctx->memory, address);
+            u8 m = read_mem(address);
             // dummy write
-            write_mem(ctx->memory, address, m);
-            m = shift_l(ctx, m);
-            write_mem(ctx->memory, address, m);
-            ctx->ac |= m;
-            set_ZN(ctx, ctx->ac);
+            write_mem(address, m);
+            m = shift_l( m);
+            write_mem(address, m);
+            gEmulator.cpu.ac |= m;
+            set_ZN( gEmulator.cpu.ac);
             break;
         }
         case SRE: {
-            u8 m = read_mem(ctx->memory, address);
+            u8 m = read_mem(address);
             // dummy write
-            write_mem(ctx->memory, address, m);
-            m = shift_r(ctx, m);
-            write_mem(ctx->memory, address, m);
-            ctx->ac ^= m;
-            set_ZN(ctx, ctx->ac);
+            write_mem(address, m);
+            m = shift_r( m);
+            write_mem(address, m);
+            gEmulator.cpu.ac ^= m;
+            set_ZN( gEmulator.cpu.ac);
             break;
         }
 
@@ -787,218 +790,218 @@ void execute(c6502* ctx){
             // By target address I mean the unindexed address as read from memory referred to here as raw_address
             // I have equated this behaviour with DMA occurring in the course of the instruction
             // This also applies to SHX, SHA and SHS
-            const u8 val = ctx->state & DMA_OCCURRED ? ctx->y: ctx->y & ((ctx->raw_address >> 8) + 1);
-            if (has_page_break(ctx->raw_address, address))
+            const u8 val = gEmulator.cpu.state & DMA_OCCURRED ? gEmulator.cpu.y: gEmulator.cpu.y & ((gEmulator.cpu.raw_address >> 8) + 1);
+            if (has_page_break(gEmulator.cpu.raw_address, address))
                 // Instruction unstable, corrupt high byte of address
                 address = (address & 0xff) | (val << 8);
-            write_mem(ctx->memory, address, val);
+            write_mem(address, val);
             break;
         }
         case SHX: {
-            const u8 val = ctx->state & DMA_OCCURRED ? ctx->x: ctx->x & ((ctx->raw_address >> 8) + 1);
-            if (has_page_break(ctx->raw_address, address))
+            const u8 val = gEmulator.cpu.state & DMA_OCCURRED ? gEmulator.cpu.x: gEmulator.cpu.x & ((gEmulator.cpu.raw_address >> 8) + 1);
+            if (has_page_break(gEmulator.cpu.raw_address, address))
                 // Instruction unstable, corrupt high byte of address
                 address = (address & 0xff) | (val << 8);
-            write_mem(ctx->memory, address, val);
+            write_mem(address, val);
             break;
         }
         case SHA: {
-            const u8 val = ctx->state & DMA_OCCURRED ? ctx->x & ctx->ac: ctx->x & ctx->ac & ((ctx->raw_address >> 8) + 1);
-            if (has_page_break(ctx->raw_address, address))
+            const u8 val = gEmulator.cpu.state & DMA_OCCURRED ? gEmulator.cpu.x & gEmulator.cpu.ac: gEmulator.cpu.x & gEmulator.cpu.ac & ((gEmulator.cpu.raw_address >> 8) + 1);
+            if (has_page_break(gEmulator.cpu.raw_address, address))
                 // Instruction unstable, corrupt high byte of address
                 address = (address & 0xff) | (val << 8);
-            write_mem(ctx->memory, address, val);
+            write_mem(address, val);
             break;
         }
         case SHS:
-            ctx->sp = ctx->ac & ctx->x;
-            const u8 val = ctx->state & DMA_OCCURRED ? ctx->x & ctx->ac: ctx->x & ctx->ac & ((ctx->raw_address >> 8) + 1);
-            if (has_page_break(ctx->raw_address, address))
+            gEmulator.cpu.sp = gEmulator.cpu.ac & gEmulator.cpu.x;
+            const u8 val = gEmulator.cpu.state & DMA_OCCURRED ? gEmulator.cpu.x & gEmulator.cpu.ac: gEmulator.cpu.x & gEmulator.cpu.ac & ((gEmulator.cpu.raw_address >> 8) + 1);
+            if (has_page_break(gEmulator.cpu.raw_address, address))
                 // Instruction unstable, corrupt high byte of address
                 address = (address & 0xff) | (val << 8);
-            write_mem(ctx->memory, address, val);
+            write_mem(address, val);
             break;
         case LAS:
-            ctx->ac = ctx->x = ctx->sp = read_mem(ctx->memory, address) & ctx->sp;;
-            set_ZN(ctx, ctx->ac);
+            gEmulator.cpu.ac = gEmulator.cpu.x = gEmulator.cpu.sp = read_mem(address) & gEmulator.cpu.sp;;
+            set_ZN( gEmulator.cpu.ac);
             break;
         default:
             break;
     }
 }
 
-static u16 read_abs_address(Memory* mem, u16 offset){
+static u16 read_abs_address(u16 offset){
     // 16-bit address is little endian so read lo then hi
-    u16 lo = (u16)read_mem(mem, offset);
-    u16 hi = (u16)read_mem(mem, offset + 1);
+    u16 lo = (u16)read_mem(offset);
+    u16 hi = (u16)read_mem(offset + 1);
     return (hi << 8) | lo;
 }
 
-static u16 get_address(c6502* ctx){
+static u16 get_address(){
     u16 addr, hi,lo;
-    switch (ctx->instruction->mode) {
+    switch (gEmulator.cpu.instruction->mode) {
         case IMPL:
         case ACC:
             // dummy read
-            read_mem(ctx->memory, ctx->pc);
+            read_mem(gEmulator.cpu.pc);
         case NONE:
-            ctx->raw_address = 0;
+            gEmulator.cpu.raw_address = 0;
             return 0;
         case REL: {
-            s8 offset = (s8)read_mem(ctx->memory, ctx->pc++);
-            addr = ctx->raw_address = ctx->pc + offset;
+            s8 offset = (s8)read_mem(gEmulator.cpu.pc++);
+            addr = gEmulator.cpu.raw_address = gEmulator.cpu.pc + offset;
             return addr;
         }
         case IMT:
-            ctx->raw_address = ctx->pc + 1;
-            return ctx->pc++;
+            gEmulator.cpu.raw_address = gEmulator.cpu.pc + 1;
+            return gEmulator.cpu.pc++;
         case ZPG:
-            ctx->raw_address = ctx->pc + 1;
-            return read_mem(ctx->memory, ctx->pc++);
+            gEmulator.cpu.raw_address = gEmulator.cpu.pc + 1;
+            return read_mem(gEmulator.cpu.pc++);
         case ZPG_X:
-            addr = ctx->raw_address = ctx->raw_address = read_mem(ctx->memory, ctx->pc++);
-            return (addr + ctx->x) & 0xFF;
+            addr = gEmulator.cpu.raw_address = gEmulator.cpu.raw_address = read_mem(gEmulator.cpu.pc++);
+            return (addr + gEmulator.cpu.x) & 0xFF;
         case ZPG_Y:
-            addr = ctx->raw_address = read_mem(ctx->memory, ctx->pc++);
-            return (addr + ctx->y) & 0xFF;
+            addr = gEmulator.cpu.raw_address = read_mem(gEmulator.cpu.pc++);
+            return (addr + gEmulator.cpu.y) & 0xFF;
         case ABS:
-            addr = ctx->raw_address = read_abs_address(ctx->memory, ctx->pc);
-            ctx->pc += 2;
+            addr = gEmulator.cpu.raw_address = read_abs_address(gEmulator.cpu.pc);
+            gEmulator.cpu.pc += 2;
             return addr;
         case ABS_X:
-            addr = ctx->raw_address = read_abs_address(ctx->memory, ctx->pc);
-            ctx->pc += 2;
-            switch (ctx->instruction->opcode) {
+            addr = gEmulator.cpu.raw_address = read_abs_address(gEmulator.cpu.pc);
+            gEmulator.cpu.pc += 2;
+            switch (gEmulator.cpu.instruction->opcode) {
                 // these don't take into account absolute x page breaks
                 case STA:case ASL:case DEC:case INC:case LSR:case ROL:case ROR:
                 // unofficial
                 case SLO:case RLA:case SRE:case RRA:case DCP:case ISB: case SHY:
                     // invalid read
-                    read_mem(ctx->memory, (addr & 0xff00) | ((addr + ctx->x) & 0xff));
+                    read_mem((addr & 0xff00) | ((addr + gEmulator.cpu.x) & 0xff));
                     break;
                 default:
-                    if(has_page_break(addr, addr + ctx->x)) {
+                    if(has_page_break(addr, addr + gEmulator.cpu.x)) {
                         // invalid read
-                        read_mem(ctx->memory, (addr & 0xff00) | ((addr + ctx->x) & 0xff));
-                        ctx->cycles++;
+                        read_mem((addr & 0xff00) | ((addr + gEmulator.cpu.x) & 0xff));
+                        gEmulator.cpu.cycles++;
                     }
             }
-            return addr + ctx->x;
+            return addr + gEmulator.cpu.x;
         case ABS_Y:
-            addr = ctx->raw_address = read_abs_address(ctx->memory, ctx->pc);
-            ctx->pc += 2;
-            switch (ctx->instruction->opcode) {
+            addr = gEmulator.cpu.raw_address = read_abs_address(gEmulator.cpu.pc);
+            gEmulator.cpu.pc += 2;
+            switch (gEmulator.cpu.instruction->opcode) {
                 case STA:case SLO:case RLA:case SRE:case RRA:case DCP:case ISB: case NOP:
                 case SHX:case SHA:case SHS:
                     // invalid read
-                    read_mem(ctx->memory, (addr & 0xff00) | ((addr + ctx->y) & 0xff));
+                    read_mem((addr & 0xff00) | ((addr + gEmulator.cpu.y) & 0xff));
                     break;
                 default:
-                    if(has_page_break(addr, addr + ctx->y)) {
+                    if(has_page_break(addr, addr + gEmulator.cpu.y)) {
                         // invalid read
-                        read_mem(ctx->memory, (addr & 0xff00) | ((addr + ctx->y) & 0xff));
-                        ctx->cycles++;
+                        read_mem((addr & 0xff00) | ((addr + gEmulator.cpu.y) & 0xff));
+                        gEmulator.cpu.cycles++;
                     }
             }
-            return addr + ctx->y;
+            return addr + gEmulator.cpu.y;
         case IND:
-            addr = ctx->raw_address = read_abs_address(ctx->memory, ctx->pc);
-            ctx->pc += 2;
-            lo = read_mem(ctx->memory, addr);
+            addr = gEmulator.cpu.raw_address = read_abs_address(gEmulator.cpu.pc);
+            gEmulator.cpu.pc += 2;
+            lo = read_mem(addr);
             // handle a bug in 6502 hardware where if reading from $xxFF (page boundary) the
             // LSB is read from $xxFF as expected but the MSB is fetched from xx00
-            hi = read_mem(ctx->memory, (addr & 0xFF00) | (addr + 1) & 0xFF);
+            hi = read_mem((addr & 0xFF00) | (addr + 1) & 0xFF);
             return (hi << 8) | lo;
         case IDX_IND:
-            addr = (read_mem(ctx->memory, ctx->pc++) + ctx->x) & 0xFF;
-            lo = read_mem(ctx->memory, addr & 0xFF);
-            hi = read_mem(ctx->memory, (addr + 1) & 0xFF);
-            addr = ctx->raw_address = (hi << 8) | lo;
+            addr = (read_mem(gEmulator.cpu.pc++) + gEmulator.cpu.x) & 0xFF;
+            lo = read_mem(addr & 0xFF);
+            hi = read_mem((addr + 1) & 0xFF);
+            addr = gEmulator.cpu.raw_address = (hi << 8) | lo;
             return addr;
         case IND_IDX:
-            addr = read_mem(ctx->memory, ctx->pc++);
-            lo = read_mem(ctx->memory, addr & 0xFF);
-            hi = read_mem(ctx->memory, (addr + 1) & 0xFF);
-            addr = ctx->raw_address = (hi << 8) | lo;
-            switch (ctx->instruction->opcode) {
+            addr = read_mem(gEmulator.cpu.pc++);
+            lo = read_mem(addr & 0xFF);
+            hi = read_mem((addr + 1) & 0xFF);
+            addr = gEmulator.cpu.raw_address = (hi << 8) | lo;
+            switch (gEmulator.cpu.instruction->opcode) {
                 case STA:case SLO:case RLA:case SRE:case RRA:case DCP:case ISB: case NOP:
                 case SHA:
                     // invalid read
-                    read_mem(ctx->memory, (addr & 0xff00) | ((addr + ctx->y) & 0xff));
+                    read_mem((addr & 0xff00) | ((addr + gEmulator.cpu.y) & 0xff));
                     break;
                 default:
-                    if(has_page_break(addr, addr + ctx->y)) {
+                    if(has_page_break(addr, addr + gEmulator.cpu.y)) {
                         // invalid read
-                        read_mem(ctx->memory, (addr & 0xff00) | ((addr + ctx->y) & 0xff));
-                        ctx->cycles++;
+                        read_mem((addr & 0xff00) | ((addr + gEmulator.cpu.y) & 0xff));
+                        gEmulator.cpu.cycles++;
                     }
             }
-            return addr + ctx->y;
+            return addr + gEmulator.cpu.y;
     }
     return 0;
 }
 
-static void set_ZN(c6502* ctx, u8 value){
-    ctx->sr &= ~(NEGATIVE | ZERO);
-    ctx->sr |= ((!value)? ZERO: 0);
-    ctx->sr |= (value & NEGATIVE);
+static void set_ZN(u8 value){
+    gEmulator.cpu.sr &= ~(NEGATIVE | ZERO);
+    gEmulator.cpu.sr |= ((!value)? ZERO: 0);
+    gEmulator.cpu.sr |= (value & NEGATIVE);
 }
 
-static void fast_set_ZN(c6502* ctx, u8 value){
+static void fast_set_ZN(u8 value){
     // this assumes the necessary flags (Z & N) have been cleared
-    ctx->sr |= ((!value)? ZERO: 0);
-    ctx->sr |= (value & NEGATIVE);
+    gEmulator.cpu.sr |= ((!value)? ZERO: 0);
+    gEmulator.cpu.sr |= (value & NEGATIVE);
 }
 
-static void push(c6502* ctx, u8 value){
-    write_mem(ctx->memory, STACK_START + ctx->sp--, value);
+static void push(u8 value){
+    write_mem(STACK_START + gEmulator.cpu.sp--, value);
 }
 
-static void push_address(c6502* ctx, u16 address){
-    write_mem(ctx->memory, STACK_START + ctx->sp--, address >> 8);
-    write_mem(ctx->memory, STACK_START + ctx->sp--, address & 0xFF);
+static void push_address(u16 address){
+    write_mem(STACK_START + gEmulator.cpu.sp--, address >> 8);
+    write_mem(STACK_START + gEmulator.cpu.sp--, address & 0xFF);
 }
 
-static u8 pop(c6502* ctx){
-    return read_mem(ctx->memory, STACK_START + ++ctx->sp);
+static u8 pop(){
+    return read_mem(STACK_START + ++gEmulator.cpu.sp);
 }
 
-static u16 pop_address(c6502* ctx){
-    u16 addr = read_mem(ctx->memory, STACK_START + ++ctx->sp);
-    return addr | ((u16)read_mem(ctx->memory, STACK_START + ++ctx->sp)) << 8;
+static u16 pop_address(){
+    u16 addr = read_mem(STACK_START + ++gEmulator.cpu.sp);
+    return addr | ((u16)read_mem(STACK_START + ++gEmulator.cpu.sp)) << 8;
 }
 
-static u8 shift_l(c6502* ctx, u8 val){
-    ctx->sr &= ~(CARRY | ZERO | NEGATIVE);
-    ctx->sr |= (val & NEGATIVE) ? CARRY: 0;
+static u8 shift_l(u8 val){
+    gEmulator.cpu.sr &= ~(CARRY | ZERO | NEGATIVE);
+    gEmulator.cpu.sr |= (val & NEGATIVE) ? CARRY: 0;
     val <<= 1;
-    fast_set_ZN(ctx, val);
+    fast_set_ZN( val);
     return val;
 }
 
-static u8 shift_r(c6502* ctx, u8 val){
-    ctx->sr &= ~(CARRY | ZERO | NEGATIVE);
-    ctx->sr |= (val & 0x1) ? CARRY: 0;
+static u8 shift_r(u8 val){
+    gEmulator.cpu.sr &= ~(CARRY | ZERO | NEGATIVE);
+    gEmulator.cpu.sr |= (val & 0x1) ? CARRY: 0;
     val >>= 1;
-    fast_set_ZN(ctx, val);
+    fast_set_ZN( val);
     return val;
 }
 
-static u8 rot_l(c6502* ctx, u8 val){
+static u8 rot_l(u8 val){
     u8 rotated = val << 1;
-    rotated |= ctx->sr & CARRY;
-    ctx->sr &= ~(CARRY | ZERO | NEGATIVE);
-    ctx->sr |= val & NEGATIVE ? CARRY: 0;
-    fast_set_ZN(ctx, rotated);
+    rotated |= gEmulator.cpu.sr & CARRY;
+    gEmulator.cpu.sr &= ~(CARRY | ZERO | NEGATIVE);
+    gEmulator.cpu.sr |= val & NEGATIVE ? CARRY: 0;
+    fast_set_ZN( rotated);
     return rotated;
 }
 
-static u8 rot_r(c6502* ctx, u8 val){
+static u8 rot_r(u8 val){
     u8 rotated = val >> 1;
-    rotated |= (ctx->sr &  CARRY) << 7;
-    ctx->sr &= ~(CARRY | ZERO | NEGATIVE);
-    ctx->sr |= val & CARRY;
-    fast_set_ZN(ctx, rotated);
+    rotated |= (gEmulator.cpu.sr &  CARRY) << 7;
+    gEmulator.cpu.sr &= ~(CARRY | ZERO | NEGATIVE);
+    gEmulator.cpu.sr |= val & CARRY;
+    fast_set_ZN( rotated);
     return rotated;
 }
 

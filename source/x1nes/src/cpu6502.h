@@ -235,6 +235,7 @@ typedef enum {
 
 typedef struct c6502{
 //    u64 t_cycles;
+    u8 t_cycles;
     u16 pc;
     u16 address;
     u16 raw_address; // address before any indexing is applied
@@ -255,17 +256,17 @@ typedef struct c6502{
     u8 NMI_line;
     const Instruction* instruction;
     struct Memory* memory;
-    void (*NMI_hook)(struct c6502*, int);
+    void (*NMI_hook)(int);
 } c6502;
 
 void init_cpu(struct Emulator* emulator);
-void reset_cpu(c6502* ctx);
-void execute(c6502* ctx);
-void interrupt(c6502* ctx, Interrupt code);
-void interrupt_clear(c6502* ctx, Interrupt code);
-void do_DMA(c6502* ctx, u16 cycles);
-u8 run_cpu_subroutine(c6502* ctx, u16 address);
-void set_cpu_mode(c6502* ctx, CPUMode mode);
-void print_cpu_trace(const c6502* ctx);
+void reset_cpu();
+void execute();
+void interrupt(Interrupt code);
+void interrupt_clear(Interrupt code);
+void do_DMA(u16 cycles);
+u8 run_cpu_subroutine(u16 address);
+void set_cpu_mode(CPUMode mode);
+void print_cpu_trace();
 
 #endif // INCL_cpu6502_h

@@ -91,7 +91,7 @@ void init_emulator(struct Emulator* emulator, int argc, char *argv[]){
 #endif // 0
 
     init_mem(emulator);
-    init_ppu(emulator);
+    init_ppu();
     init_cpu(emulator);
 #if defined(ENABLE_AUDIO) && ENABLE_AUDIO
     init_APU(emulator);
@@ -114,11 +114,9 @@ void run_emulator(struct Emulator* emulator){
     }
 #endif // defined(ENABLE_NSF) && ENABLE_NSF
 
-#if defined(ENABLE_JOYSTICK) && ENABLE_JOYSTICK
     struct JoyPad* joy1 = &emulator->mem.joy1;
     struct JoyPad* joy2 = &emulator->mem.joy2;
-#endif // defined(ENABLE_JOYSTICK) && ENABLE_JOYSTICK
-    struct PPU* ppu = &emulator->ppu;
+//    struct PPU* ppu = &emulator->ppu;
     struct c6502* cpu = &emulator->cpu;
 #if defined(ENABLE_AUDIO) && ENABLE_AUDIO
     struct APU* apu = &emulator->apu;
@@ -146,13 +144,11 @@ void run_emulator(struct Emulator* emulator){
 
 #if 0
         while (SDL_PollEvent(&e)) {
-#if defined(ENABLE_JOYSTICK) && ENABLE_JOYSTICK
             update_joypad(joy1, &e);
             update_joypad(joy2, &e);
             if((joy1->status & 0xc) == 0xc || (joy2->status & 0xc) == 0xc) {
                 reset_emulator(emulator);
             }
-#endif // defined(ENABLE_JOYSTICK) && ENABLE_JOYSTICK
             switch (e.type) {
                 case SDL_EVENT_KEY_DOWN:
                     switch (e.key.key) {
@@ -184,22 +180,22 @@ void run_emulator(struct Emulator* emulator){
         }
 #endif
 
-#if defined(ENABLE_JOYSTICK) && ENABLE_JOYSTICK
+#if 0
         // trigger turbo events
         if(ppu->frames % TURBO_SKIP == 0) {
             turbo_trigger(joy1);
             turbo_trigger(joy2);
         }
-#endif // defined(ENABLE_JOYSTICK) && ENABLE_JOYSTICK
+#endif
 
         if(!emulator->pause){
             // if ppu.render is set a frame is complete
             if(emulator->type == NTSC) {
-                while (!ppu->render) {
-                    execute_ppu(ppu);
-                    execute_ppu(ppu);
-                    execute_ppu(ppu);
-                    execute(cpu);
+                while (!ppu_render) {
+                    execute_ppu();
+                    execute_ppu();
+                    execute_ppu();
+                    execute();
 #if defined(ENABLE_AUDIO) && ENABLE_AUDIO
                     execute_apu(apu);
 #endif
@@ -207,18 +203,18 @@ void run_emulator(struct Emulator* emulator){
             }else{
                 // PAL
                 u8 check = 0;
-                while (!ppu->render) {
-                    execute_ppu(ppu);
-                    execute_ppu(ppu);
-                    execute_ppu(ppu);
+                while (!ppu_render) {
+                    execute_ppu();
+                    execute_ppu();
+                    execute_ppu();
                     check++;
                     if(check == 5) {
                         // on the fifth run execute an extra ppu clock
                         // this produces 3.2 scanlines per cpu clock
-                        execute_ppu(ppu);
+                        execute_ppu();
                         check = 0;
                     }
-                    execute(cpu);
+                    execute();
 #if defined(ENABLE_AUDIO) && ENABLE_AUDIO
                     execute_apu(apu);
 #endif
@@ -230,7 +226,13 @@ void run_emulator(struct Emulator* emulator){
 #if 0
             render_graphics(g_ctx, ppu->screen);
 #endif
-            ppu->render = 0;
+#if 0
+            // 1フレームに1回の割合で更新する
+            update_joypad(joy1);
+            update_joypad(joy2);
+#endif
+
+            ppu_render = 0;
 #if defined(ENABLE_AUDIO) && ENABLE_AUDIO
             queue_audio(apu, g_ctx);
 #endif
@@ -262,13 +264,13 @@ void reset_emulator(Emulator* emulator) {
     }
 #endif
     LOG(INFO, "Resetting emulator");
-    reset_cpu(&emulator->cpu);
+    reset_cpu();
 #if defined(ENABLE_AUDIO) && ENABLE_AUDIO
     reset_APU(&emulator->apu);
 #endif
-    reset_ppu(&emulator->ppu);
+    reset_ppu();
     if(emulator->mapper.reset != nullptr) {
-        emulator->mapper.reset(&emulator->mapper);
+        emulator->mapper.reset();
     }
 }
 
@@ -446,6 +448,7 @@ void run_NSF_player(struct Emulator* emulator) {
 }
 #endif // defined(ENABLE_NSF) && ENABLE_NSF
 
+#if 0
 void free_emulator(struct Emulator* emulator){
     LOG(DEBUG, "Starting emulator clean up");
 #if defined(ENABLE_AUDIO) && ENABLE_AUDIO
@@ -460,3 +463,4 @@ void free_emulator(struct Emulator* emulator){
 #endif
     LOG(DEBUG, "Emulator session successfully terminated");
 }
+#endif

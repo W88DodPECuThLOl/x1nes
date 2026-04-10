@@ -37,33 +37,38 @@ enum {
 };
 
 typedef struct PPU {
-    u8 frames;
-    PixelFormat *lineBuffer;
-    u8 V_RAM[0x1000];
-    u8 OAM[256];
-    u8 OAM_cache[8];
-    u8 palette[0x20];
-    u8 OAM_cache_len;
-    u8 ctrl;
-    u8 mask;
-    u8 status;
-    u16 dots;
-    u16 scanlines;
-    u16 scanlines_per_frame;
+//    u8 frames;
+//    PixelFormat *lineBuffer;
+//    u8 V_RAM[0x1000];
+//    u8 OAM[256];
+//    u8 OAM_cache[8];
+//    u8 palette[0x20];
+//    u8 OAM_cache_len;
+//    u8 ctrl;
+//    u8 mask;
+//    u8 status;
+//    u16 dots;
+//    u16 scanlines;
+//    u16 scanlines_per_frame;
 
-    u16 v;
-    u16 t;
-    u8 x;
-    u8 w;
-    u8 oam_address;
-    u8 buffer;
+//    u16 v;
+//    u16 t;
+//    u8 x;
+//    u8 w;
+//    u8 oam_address;
+//    u8 buffer;
 
-    u8 render;
-    u8 bus;
+//    u8 render;
+//    u8 bus;
 
-    struct Emulator* emulator;
-    struct Mapper* mapper;
+//    struct Emulator* emulator;
+//    struct Mapper* mapper;
+u8 dummy;
 } PPU;
+
+extern u8 ppu_mask;
+extern u8 ppu_bus;
+extern u8 ppu_render; 
 
 // ARGB8888 palette
 /*
@@ -81,21 +86,21 @@ static const uint32_t nes_palette_raw[64] = {
 
 // extern uint32_t nes_palette[64];
 
-void execute_ppu(PPU* ppu);
-void reset_ppu(PPU* ppu);
-void exit_ppu(PPU* ppu);
-void init_ppu(struct Emulator* emulator);
-u8 read_status(PPU* ppu);
-u8 read_ppu(PPU* ppu);
-void set_ctrl(PPU* ppu, u8 ctrl);
-void write_ppu(PPU* ppu, u8 value);
-void dma(PPU* ppu, u8 value);
-void set_scroll(PPU* ppu, u8 coord);
-void set_address(PPU* ppu, u8 address);
-void set_oam_address(PPU* ppu, u8 address);
-u8 read_oam(PPU* ppu);
-void write_oam(PPU* ppu, u8 value);
-u8 read_vram(PPU* ppu, u16 address);
-void write_vram(PPU* ppu, u16 address, u8 value);
+void execute_ppu();
+void reset_ppu();
+void exit_ppu();
+void init_ppu();
+u8 read_status();
+u8 read_ppu();
+void set_ctrl(u8 ctrl);
+void write_ppu(u8 value);
+void dma(u8 value);
+void set_scroll(u8 coord);
+void set_address(u8 address);
+void set_oam_address(u8 address);
+u8 read_oam();
+void write_oam(u8 value);
+u8 read_vram(u16 address);
+void write_vram(u16 address, u8 value);
 
 #endif // INCL_ppu_h

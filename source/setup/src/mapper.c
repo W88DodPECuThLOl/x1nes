@@ -3,33 +3,159 @@
 #include <string.h>
 
 static int
+select_CNROM(Mapper *mapper)
+{
+    // PRG : BANK0
+    // CHR : BANK1 ～32KiBまで
+    //       EMM0  32KiBオーバー
+
+    //
+    // プログラム部分
+    //
+    if(mapper->PRG_banks > 2) {
+        LOG(ERROR, "The program size is too large.");
+        return -1;
+    }
+    u32 emmAddress = INES_HEADER_SIZE;
+    u32 copySize = (u32)mapper->PRG_banks * 0x4000;
+    x1_copyToBank0FromEmm0(0x0000, emmAddress, copySize);
+    LOG(INFO, "BANK0  PRG  $0000-$%04X", (u16)(copySize - 1));
+    emmAddress += copySize;
+    //
+    // キャラクタ部分
+    //
+    copySize = (u32)mapper->CHR_banks * 0x2000;
+    if(mapper->CHR_banks <= 4) {
+        x1_copyToBank1FromEmm0(0x0000, emmAddress, copySize);
+        LOG(INFO, "BANK1  CHR  $0000-$%04X", (u16)(copySize - 1));
+    } else {
+        u32 endAddress = emmAddress + copySize - 1;
+        LOG(INFO, "EMM0   CHR  $%02X:%04X-$%02X:%04X",
+            (u16)(emmAddress >> 16), (u16)emmAddress,
+            (u16)(endAddress >> 16), (u16)endAddress);
+    }
+    if(mapper->CHR_banks > 16) {
+        LOG(ERROR, "The character size is too large.");
+        return -1;
+    }
+    return 0;
+}
+
+static int
+select_MMC1_MMC3_GNROM_VRC1(Mapper *mapper)
+{
+    // PRG : EMM0
+    // CHR : EMM0
+
+    //
+    // プログラム部分
+    //
+    u32 emmAddress = INES_HEADER_SIZE;
+    u32 copySize = (u32)mapper->PRG_banks * 0x4000;
+    u32 endAddress = emmAddress + copySize - 1;
+    LOG(INFO, "EMM0   PRG  $%02X:%04X-$%02X:%04X",
+        (u16)(emmAddress >> 16), (u16)emmAddress,
+        (u16)(endAddress >> 16), (u16)endAddress);
+    emmAddress += copySize;
+    //
+    // キャラクタ部分
+    //
+    copySize = (u32)mapper->CHR_banks * 0x2000;
+    endAddress = emmAddress + copySize - 1;
+    LOG(INFO, "EMM0   CHR  $%02X:%04X-$%02X:%04X",
+        (u16)(emmAddress >> 16), (u16)emmAddress,
+        (u16)(endAddress >> 16), (u16)endAddress);
+
+    if(endAddress >= (u32)320*1024) {
+        LOG(ERROR, "Out of EMM.");
+        return -1;
+    }
+
+    return 0;
+}
+
+static int
+select_UXROM_UN1ROM_mapper180(Mapper *mapper)
+{
+    // PRG : EMM0  ～256KiB
+    // CHR : BANK1
+
+    //
+    // プログラム部分
+    //
+    if(mapper->PRG_banks > 16) {
+        LOG(ERROR, "The program size is too large.");
+        return -1;
+    }
+    u32 emmAddress = INES_HEADER_SIZE;
+    u32 copySize = (u32)mapper->PRG_banks * 0x4000;
+    u32 endAddress = emmAddress + copySize - 1;
+    LOG(INFO, "EMM0   PRG  $%02X:%04X-$%02X:%04X",
+        (u16)(emmAddress >> 16), (u16)emmAddress,
+        (u16)(endAddress >> 16), (u16)endAddress);
+    emmAddress += copySize;
+    //
+    // キャラクタ部分
+    //
+    copySize = (u32)mapper->CHR_banks * 0x2000;
+    if(mapper->CHR_banks <= 4) {
+        x1_copyToBank1FromEmm0(0x0000, emmAddress, copySize);
+        LOG(INFO, "BANK1  CHR  $0000-$%04X", (u16)(copySize - 1));
+    } else {
+        LOG(ERROR, "The character size is too large.");
+        return -1;
+    }
+    return 0;
+}
+
+static int
+select_AORPM(Mapper *mapper)
+{
+    // PRG : EMM0
+    // CHR : BANK1
+
+    //
+    // プログラム部分
+    //
+    u32 emmAddress = INES_HEADER_SIZE;
+    u32 copySize = (u32)mapper->PRG_banks * 0x4000;
+    u32 endAddress = emmAddress + copySize - 1;
+    LOG(INFO, "EMM0   CHR  $%02X:%04X-$%02X:%04X",
+        (u16)(emmAddress >> 16), (u16)emmAddress,
+        (u16)(endAddress >> 16), (u16)endAddress);
+    emmAddress += copySize;
+    //
+    // キャラクタ部分
+    //
+    copySize = (u32)mapper->CHR_banks * 0x2000;
+    if(mapper->CHR_banks <= 4) {
+        x1_copyToBank1FromEmm0(0x0000, emmAddress, copySize);
+        LOG(INFO, "BANK1  CHR  $0000-$%04X", (u16)(copySize - 1));
+    } else {
+        LOG(ERROR, "The character size is too large.");
+        return -1;
+    }
+    return 0;
+}
+
+static int
 select_mapper(Mapper *mapper)
 {
     switch(mapper->mapper_num) {
         case 0:
-        case 3:
-            {
-                // BANK0
-                //   PRG_banks
-                // BANK1
-                //   CHR_banks
-                if(mapper->PRG_banks > 2) {
-                    LOG(ERROR, "The program size is too large.");
-                    return -1;
-                }
-                if(mapper->CHR_banks > 4) {
-                    LOG(ERROR, "The character size is too large.");
-                    return -1;
-                }
-                u32 emmAddress = INES_HEADER_SIZE;
-                x1_copyToBank0FromEmm0(0x0000, emmAddress, mapper->PRG_banks * 0x4000);
-                emmAddress += mapper->PRG_banks * 0x4000;
-                x1_copyToBank1FromEmm0(0x0000, emmAddress, mapper->CHR_banks * 0x2000);
-                LOG(INFO, "BANK0  PRG  $0000-$%04X", (u16)(mapper->PRG_banks * 0x4000 - 1));
-                LOG(INFO, "BANK1  CHR  $0000-$%04X", (u16)(mapper->CHR_banks * 0x2000 - 1));
-                return 0;
-            }
-            break;
+        case 3: // CNROM
+            return select_CNROM(mapper);
+        case 1: // MMC1
+        case 4: // MMC3
+        case 66: // GNROM
+        case 75: // VRC1
+            return select_MMC1_MMC3_GNROM_VRC1(mapper);
+        case 2: // UXROM
+        case 94: // UN1ROM
+        case 180: // mapper180
+            return select_UXROM_UN1ROM_mapper180(mapper);
+        case 7: // AOROM
+            return select_AORPM(mapper);
     }
     return -1;
 }
@@ -170,12 +296,18 @@ load_data(Mapper *mapper)
         mapper->RAM_size = 0x2000;
     }
 
-#if 0
     if (mapper->RAM_size) {
+#if 0
         mapper->PRG_RAM = malloc(mapper->RAM_size);
         memset(mapper->PRG_RAM, 0, mapper->RAM_size);
-    }
+#else
+        if(mapper->RAM_size > 0x2000) {
+            LOG(ERROR, "The PRG RAM size is too large.");
+            return -1;
+        }
+        mapper->PRG_RAM = (u8*)0x6000;
 #endif
+    }
 
     if (mapper->format != NES2) {
         if (!mapper->CHR_banks) {

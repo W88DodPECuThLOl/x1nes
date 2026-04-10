@@ -5,9 +5,14 @@ https://github.com/ObaraEmmanuel/NES
 
 # 実装状況
 
-* 入力対応していません。
+* ~~入力対応していません。~~
+  * JoyStick1のTrigger1 Aボタン
+  * JoyStick1のTrigger1 Bボタン
+  * JoyStick2のTrigger1 STARTボタン
+  * JoyStick2のTrigger2 SELECTボタン
 * 無音です。
-* mapper0のみ対応しています。
+* ~~mapper0のみ対応しています。~~
+  * 未確認 1,2,3,4,7,66,75,94,180
 
 # 注意
 * 物凄く物凄く物凄く遅いです。  
@@ -50,7 +55,7 @@ https://github.com/ObaraEmmanuel/NES
    L A:SetUp.bin  
    J8000  
    L A:X1NES.BIN  
-   J6000
+   J8000
    
 # データについて
 

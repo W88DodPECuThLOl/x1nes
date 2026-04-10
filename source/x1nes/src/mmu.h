@@ -3,9 +3,7 @@
 
 #include "dev/BasicTypes.h"
 
-#if defined(ENABLE_JOYSTICK) && ENABLE_JOYSTICK
 #include "controller.h"
-#endif // defined(ENABLE_JOYSTICK) && ENABLE_JOYSTICK
 
 #define IRQ_ADDRESS 0xFFFE
 #define NMI_ADDRESS 0xFFFA
@@ -64,17 +62,15 @@ typedef struct Memory {
     u8 RAM[RAM_SIZE];
 #endif
     u8 bus;
-#if defined(ENABLE_JOYSTICK) && ENABLE_JOYSTICK
     JoyPad joy1;
     JoyPad joy2;
-#endif // defined(ENABLE_JOYSTICK) && ENABLE_JOYSTICK
     struct Mapper* mapper;
     struct Emulator* emulator;
 } Memory;
 
 void init_mem(struct Emulator* emulator);
-void write_mem(Memory* mem, u16 address, u8 value);
-u8 read_mem(Memory* mem, u16 address);
-u8* get_ptr(Memory* mem, u16 address);
+void write_mem(u16 address, u8 value);
+u8 read_mem(u16 address);
+u8* get_ptr(u16 address);
 
 #endif // INCL_mmu_h
